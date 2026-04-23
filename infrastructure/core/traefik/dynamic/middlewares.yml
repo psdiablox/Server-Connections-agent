@@ -1,9 +1,9 @@
 # Traefik Dynamic Configuration — Reusable Middlewares
-# Referenced by all services via: middleware-name@file
+# This file is hot-reloaded by Traefik — no restart needed after changes.
 
 http:
   middlewares:
-    # Security headers — apply to every public HTTPS route
+    # Security headers — applied to every public HTTPS route
     secure-headers:
       headers:
         sslRedirect: true
@@ -32,21 +32,24 @@ http:
         burst: 5
         period: 1m
 
-    # IP whitelist for admin interfaces (traefik, grafana, portainer)
+    # ── ADMIN IP ALLOWLIST ──────────────────────────────────────────────────
+    # To update your IP: edit this file and save — Traefik reloads instantly.
+    # Use /128 for a single IPv6, /32 for a single IPv4.
     admin-ip:
       ipAllowList:
         sourceRange:
           - "127.0.0.1/32"
           - "10.0.0.0/8"
           - "192.168.0.0/16"
-          - "${ADMIN_IP}/32"    # Set ADMIN_IP in .env
+          - "YOUR_ADMIN_IP/128"
 
-    # Basic auth for admin dashboards
-    # Generate: echo $(htpasswd -nB admin) | sed -e s/\\$/\\$\\$/g
+    # ── ADMIN BASIC AUTH ────────────────────────────────────────────────────
+    # Password stored as bcrypt hash in .htpasswd (gitignored).
+    # To change password: htpasswd -nB admin > dynamic/.htpasswd
     admin-auth:
       basicAuth:
         usersFile: /etc/traefik/dynamic/.htpasswd
-        realm: "Admin Area"
+        realm: "pserenlo.com — Admin"
 
     # CORS — adjust for your frontend domains
     cors-api:
@@ -61,7 +64,7 @@ http:
           - "Authorization"
           - "Content-Type"
         accessControlAllowOriginList:
-          - "https://${DOMAIN}"
+          - "https://pserenlo.com"
         accessControlMaxAge: 100
         addVaryHeader: true
 
@@ -70,8 +73,3 @@ http:
       compress:
         excludedContentTypes:
           - text/event-stream
-
-  # Chained middleware sets for convenience
-  # Use "public@file" for normal public services
-  # Use "public-api@file" for API endpoints
-  # Use "admin@file" for admin-only interfaces
