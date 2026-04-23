@@ -34,7 +34,7 @@ services:
       - "traefik.http.routers.vaultwarden.rule=Host(`vault.${DOMAIN}`)"
       - "traefik.http.routers.vaultwarden.entrypoints=websecure"
       - "traefik.http.routers.vaultwarden.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.vaultwarden.middlewares=secure-headers@file,rate-limit@file"
+      - "traefik.http.routers.vaultwarden.middlewares=admin-ip@file,secure-headers@file,rate-limit@file"
       - "traefik.http.services.vaultwarden.loadbalancer.server.port=80"
       # Admin panel behind IP restriction
       - "traefik.http.routers.vaultwarden-admin.rule=Host(`vault.${DOMAIN}`) && PathPrefix(`/admin`)"

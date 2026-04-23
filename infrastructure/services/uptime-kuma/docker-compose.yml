@@ -25,7 +25,7 @@ services:
       - "traefik.http.routers.uptime-kuma.rule=Host(`status.${DOMAIN}`)"
       - "traefik.http.routers.uptime-kuma.entrypoints=websecure"
       - "traefik.http.routers.uptime-kuma.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.uptime-kuma.middlewares=secure-headers@file,rate-limit@file"
+      - "traefik.http.routers.uptime-kuma.middlewares=admin-ip@file,secure-headers@file,rate-limit@file"
       - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
     security_opt:
       - no-new-privileges:true
