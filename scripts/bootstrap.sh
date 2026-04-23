@@ -65,13 +65,19 @@ fi
 usermod -aG docker "${DEPLOY_USER}"
 
 # ─── SSH Key Setup (deploy user) ─────────────────────────────────────────────
+# Copy root's authorized_keys to deploy user BEFORE hardening disables root login.
 SSH_DIR="/home/${DEPLOY_USER}/.ssh"
 mkdir -p "${SSH_DIR}"
 chmod 700 "${SSH_DIR}"
-touch "${SSH_DIR}/authorized_keys"
+if [ -s /root/.ssh/authorized_keys ]; then
+  cp /root/.ssh/authorized_keys "${SSH_DIR}/authorized_keys"
+  info "Copied root SSH keys to ${DEPLOY_USER}"
+else
+  touch "${SSH_DIR}/authorized_keys"
+  warn "No root authorized_keys found — add your public key to ${SSH_DIR}/authorized_keys manually before hardening disables root login"
+fi
 chmod 600 "${SSH_DIR}/authorized_keys"
 chown -R "${DEPLOY_USER}:${DEPLOY_USER}" "${SSH_DIR}"
-info "SSH dir ready at ${SSH_DIR}/authorized_keys — add your public key manually"
 
 # ─── Repository Directory ────────────────────────────────────────────────────
 info "Setting up repo directory at ${REPO_DIR}..."
