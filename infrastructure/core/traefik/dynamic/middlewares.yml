@@ -37,6 +37,8 @@ http:
     # Use /128 for a single IPv6, /32 for a single IPv4.
     admin-ip:
       ipAllowList:
+        ipStrategy:
+          depth: 1   # Use X-Forwarded-For (real IP behind Cloudflare proxy)
         sourceRange:
           - "127.0.0.1/32"
           - "10.0.0.0/8"
