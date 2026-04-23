@@ -88,10 +88,6 @@ chown "${DEPLOY_USER}:${DEPLOY_USER}" "${REPO_DIR}"
 info "Creating Docker networks..."
 bash "$(dirname "$0")/networks.sh"
 
-# ─── Apply Security Hardening ────────────────────────────────────────────────
-info "Applying security hardening..."
-bash "$(dirname "$0")/harden.sh"
-
 # ─── Logrotate for Docker ────────────────────────────────────────────────────
 cat > /etc/logrotate.d/docker-containers <<'EOF'
 /var/lib/docker/containers/*/*.log {
@@ -106,10 +102,14 @@ EOF
 
 info "Bootstrap complete!"
 echo ""
-echo "  Next steps:"
-echo "  1. Add SSH public key to /home/${DEPLOY_USER}/.ssh/authorized_keys"
-echo "  2. Copy .env.example files to .env and fill in values"
-echo "  3. Deploy core stack: make deploy SERVICE=infrastructure/core/traefik"
-echo "  4. Deploy monitoring: make deploy SERVICE=infrastructure/monitoring"
+echo "  ✓ Docker installed"
+echo "  ✓ User '${DEPLOY_USER}' created with your SSH key"
+echo "  ✓ Docker networks created"
 echo ""
-warn "Reboot recommended before deploying services."
+echo "  NEXT — verify deploy user access BEFORE hardening:"
+echo "    ssh -i ~/.ssh/server_key ${DEPLOY_USER}@<server-ip>"
+echo ""
+echo "  Once confirmed working, run hardening:"
+echo "    bash scripts/harden.sh"
+echo ""
+warn "Do NOT run harden.sh until you have confirmed SSH access as '${DEPLOY_USER}'."
