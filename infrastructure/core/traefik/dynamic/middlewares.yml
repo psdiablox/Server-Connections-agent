@@ -15,8 +15,7 @@ http:
         browserXssFilter: true
         referrerPolicy: "strict-origin-when-cross-origin"
         permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=()"
-        customFrameOptionsValue: "SAMEORIGIN"
-        contentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+        # CSP intentionally omitted — each app sets its own via its own headers
 
     # Rate limiting — prevents abuse on public routes
     rate-limit:
