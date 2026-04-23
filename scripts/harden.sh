@@ -44,7 +44,10 @@ apply_sshd "AllowAgentForwarding"       "no"
 apply_sshd "AllowTcpForwarding"         "no"
 apply_sshd "Protocol"                   "2"
 
-sshd -t && systemctl restart sshd && info "SSH hardened and restarted"
+# Remove cloud-init override that re-enables password auth on VPS providers
+rm -f /etc/ssh/sshd_config.d/50-cloud-init.conf
+
+sshd -t && systemctl restart ssh && info "SSH hardened and restarted"
 
 # ─── UFW Firewall ────────────────────────────────────────────────────────────
 info "Configuring UFW firewall..."

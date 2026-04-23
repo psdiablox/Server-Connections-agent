@@ -64,6 +64,10 @@ fi
 # Ensure deploy user is in docker group
 usermod -aG docker "${DEPLOY_USER}"
 
+# Passwordless sudo for deploy — required for non-interactive remote management
+echo "${DEPLOY_USER} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/${DEPLOY_USER}
+chmod 440 /etc/sudoers.d/${DEPLOY_USER}
+
 # ─── SSH Key Setup (deploy user) ─────────────────────────────────────────────
 # Copy root's authorized_keys to deploy user BEFORE hardening disables root login.
 SSH_DIR="/home/${DEPLOY_USER}/.ssh"
