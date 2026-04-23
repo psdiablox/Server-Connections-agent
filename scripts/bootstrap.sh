@@ -55,8 +55,8 @@ fi
 info "Creating deploy user '${DEPLOY_USER}'..."
 if ! id "${DEPLOY_USER}" &>/dev/null; then
   useradd -m -s /bin/bash -G docker,sudo "${DEPLOY_USER}"
-  passwd -l "${DEPLOY_USER}"  # Lock password — SSH key only
-  info "User '${DEPLOY_USER}' created (password locked, SSH key required)"
+  usermod -p '*' "${DEPLOY_USER}"  # Disable password (not locked) — PAM allows SSH key auth
+  info "User '${DEPLOY_USER}' created (password disabled, SSH key only)"
 else
   warn "User '${DEPLOY_USER}' already exists — skipping creation"
 fi
