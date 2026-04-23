@@ -1,0 +1,78 @@
+# Traefik v3 — Static Configuration
+# Changes here require a Traefik container restart.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+api:
+  dashboard: true
+  insecure: false
+
+log:
+  level: WARN
+  format: json
+
+accessLog:
+  filePath: /dev/stdout
+  format: json
+  filters:
+    statusCodes:
+      - "400-599"
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        User-Agent: keep
+        X-Forwarded-For: keep
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
+        options: modern@file
+    http3: {}
+    forwardedHeaders:
+      trustedIPs:
+        - "127.0.0.1/32"
+        - "10.0.0.0/8"
+        - "172.16.0.0/12"
+        - "192.168.0.0/16"
+        - "100.64.0.0/10"  # Cloudflare proxy IPs (add if using CF)
+
+providers:
+  docker:
+    endpoint: "tcp://socket-proxy:2375"
+    exposedByDefault: false
+    network: proxy
+    watch: true
+
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "${ACME_EMAIL}"
+      storage: /letsencrypt/acme.json
+      # HTTP challenge — works without Cloudflare
+      httpChallenge:
+        entryPoint: web
+      # DNS challenge (comment httpChallenge and uncomment below for wildcard certs)
+      # dnsChallenge:
+      #   provider: cloudflare
+      #   resolvers:
+      #     - "1.1.1.1:53"
+      #     - "8.8.8.8:53"

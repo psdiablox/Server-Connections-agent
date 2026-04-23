@@ -1,0 +1,77 @@
+# Traefik Dynamic Configuration — Reusable Middlewares
+# Referenced by all services via: middleware-name@file
+
+http:
+  middlewares:
+    # Security headers — apply to every public HTTPS route
+    secure-headers:
+      headers:
+        sslRedirect: true
+        forceSTSHeader: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=()"
+        customFrameOptionsValue: "SAMEORIGIN"
+        contentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+
+    # Rate limiting — prevents abuse on public routes
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1m
+
+    # Strict rate limiting for auth endpoints
+    rate-limit-auth:
+      rateLimit:
+        average: 10
+        burst: 5
+        period: 1m
+
+    # IP whitelist for admin interfaces (traefik, grafana, portainer)
+    admin-ip:
+      ipAllowList:
+        sourceRange:
+          - "127.0.0.1/32"
+          - "10.0.0.0/8"
+          - "192.168.0.0/16"
+          - "${ADMIN_IP}/32"    # Set ADMIN_IP in .env
+
+    # Basic auth for admin dashboards
+    # Generate: echo $(htpasswd -nB admin) | sed -e s/\\$/\\$\\$/g
+    admin-auth:
+      basicAuth:
+        usersFile: /etc/traefik/dynamic/.htpasswd
+        realm: "Admin Area"
+
+    # CORS — adjust for your frontend domains
+    cors-api:
+      headers:
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        accessControlAllowHeaders:
+          - "Authorization"
+          - "Content-Type"
+        accessControlAllowOriginList:
+          - "https://${DOMAIN}"
+        accessControlMaxAge: 100
+        addVaryHeader: true
+
+    # Compress responses
+    compress:
+      compress:
+        excludedContentTypes:
+          - text/event-stream
+
+  # Chained middleware sets for convenience
+  # Use "public@file" for normal public services
+  # Use "public-api@file" for API endpoints
+  # Use "admin@file" for admin-only interfaces

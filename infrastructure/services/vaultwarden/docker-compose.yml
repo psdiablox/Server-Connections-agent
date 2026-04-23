@@ -1,0 +1,51 @@
+name: vaultwarden
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
+  proxy:
+    external: true
+
+volumes:
+  data:
+
+services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: unless-stopped
+    networks:
+      - internal
+      - proxy
+    volumes:
+      - data:/data
+    environment:
+      - DOMAIN=https://vault.${DOMAIN}
+      - SIGNUPS_ALLOWED=${SIGNUPS_ALLOWED:-false}
+      - INVITATIONS_ALLOWED=${INVITATIONS_ALLOWED:-true}
+      - ADMIN_TOKEN=${VAULTWARDEN_ADMIN_TOKEN}
+      - ROCKET_ENV=production
+      - LOG_LEVEL=warn
+      - EXTENDED_LOGGING=false
+      - TZ=${TZ:-UTC}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vaultwarden.rule=Host(`vault.${DOMAIN}`)"
+      - "traefik.http.routers.vaultwarden.entrypoints=websecure"
+      - "traefik.http.routers.vaultwarden.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.vaultwarden.middlewares=secure-headers@file,rate-limit@file"
+      - "traefik.http.services.vaultwarden.loadbalancer.server.port=80"
+      # Admin panel behind IP restriction
+      - "traefik.http.routers.vaultwarden-admin.rule=Host(`vault.${DOMAIN}`) && PathPrefix(`/admin`)"
+      - "traefik.http.routers.vaultwarden-admin.entrypoints=websecure"
+      - "traefik.http.routers.vaultwarden-admin.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.vaultwarden-admin.middlewares=admin-ip@file,rate-limit-auth@file,secure-headers@file"
+      - "traefik.http.routers.vaultwarden-admin.service=vaultwarden"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.3"

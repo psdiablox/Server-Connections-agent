@@ -1,0 +1,43 @@
+name: traefik
+
+networks:
+  proxy:
+    external: true
+  socket-proxy:
+    external: true
+
+volumes:
+  certs:
+
+services:
+  traefik:
+    image: traefik:v3.3
+    container_name: traefik-proxy
+    restart: unless-stopped
+    networks:
+      - proxy
+      - socket-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./dynamic:/etc/traefik/dynamic:ro
+      - certs:/letsencrypt
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN:-}   # Optional: Cloudflare DNS challenge
+    labels:
+      - "traefik.enable=true"
+      # Dashboard router — admin only
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${DOMAIN}`)"
+      - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik-dashboard.service=api@internal"
+      - "traefik.http.routers.traefik-dashboard.middlewares=admin-auth@file,admin-ip@file,secure-headers@file"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"

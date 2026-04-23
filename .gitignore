@@ -1,0 +1,49 @@
+# Secrets — NEVER commit these
+.env
+*.env
+!*.env.example
+
+# Certificates and keys
+*.pem
+*.crt
+*.key
+*.p12
+*.pfx
+acme.json
+letsencrypt/
+
+# Backups
+backups/
+*.tar.gz
+*.tar.bz2
+*.zip
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+.directory
+
+# Editor
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Terraform (if used later)
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Generated configs (never commit runtime state)
+traefik/acme.json
+
+# Sensitive data
+*secrets*
+*password*
+*credentials*
+*token*

@@ -1,0 +1,53 @@
+name: crowdsec
+
+networks:
+  proxy:
+    external: true
+
+volumes:
+  data:
+  db:
+
+services:
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: crowdsec
+    restart: unless-stopped
+    networks:
+      - proxy
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - data:/etc/crowdsec
+      - db:/var/lib/crowdsec/data
+    environment:
+      - COLLECTIONS=crowdsecurity/linux crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/base-http-scenarios
+      - TZ=${TZ:-UTC}
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+
+  # Traefik bouncer — bans IPs at the proxy level
+  traefik-bouncer:
+    image: fbonalair/traefik-crowdsec-bouncer:latest
+    container_name: crowdsec-traefik-bouncer
+    restart: unless-stopped
+    networks:
+      - proxy
+    environment:
+      - CROWDSEC_BOUNCER_API_KEY=${CROWDSEC_BOUNCER_API_KEY}
+      - CROWDSEC_AGENT_HOST=crowdsec:8080
+      - GIN_MODE=release
+    depends_on:
+      - crowdsec
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.1"

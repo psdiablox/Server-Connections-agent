@@ -1,0 +1,30 @@
+[DEFAULT]
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+banaction = iptables-multiport
+backend = systemd
+
+# Email notifications (optional)
+# destemail = admin@yourdomain.com
+# sender = fail2ban@yourdomain.com
+# action = %(action_mwl)s
+
+[sshd]
+enabled  = true
+port     = ssh
+filter   = sshd
+maxretry = 3
+bantime  = 24h
+
+[traefik-auth]
+enabled  = true
+port     = http,https
+filter   = traefik-auth
+logpath  = /var/log/traefik/access.log
+maxretry = 5
+bantime  = 1h
+
+[docker-logs]
+enabled  = false
+# Enable if you route Docker container logs to /var/log
