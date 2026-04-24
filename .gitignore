@@ -3,6 +3,7 @@
 *.env
 !*.env.example
 .htpasswd
+admin-access.yml
 
 # Certificates and keys
 *.pem

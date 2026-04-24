@@ -23,6 +23,7 @@ services:
       - certs:/letsencrypt
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
+      - ACME_EMAIL=${ACME_EMAIL}
       - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN:-}
     labels:
       - "traefik.enable=true"

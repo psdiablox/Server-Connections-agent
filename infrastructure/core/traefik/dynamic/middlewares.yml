@@ -1,5 +1,8 @@
 # Traefik Dynamic Configuration — Reusable Middlewares
 # This file is hot-reloaded by Traefik — no restart needed after changes.
+#
+# ADMIN IP and AUTH are defined in admin-access.yml (gitignored).
+# See admin-access.yml.example to set yours up.
 
 http:
   middlewares:
@@ -15,7 +18,7 @@ http:
         browserXssFilter: true
         referrerPolicy: "strict-origin-when-cross-origin"
         permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=()"
-        # CSP intentionally omitted — each app sets its own via its own headers
+        # CSP intentionally omitted — each app sets its own
 
     # Rate limiting — prevents abuse on public routes
     rate-limit:
@@ -31,43 +34,14 @@ http:
         burst: 5
         period: 1m
 
-    # ── ADMIN IP ALLOWLIST ──────────────────────────────────────────────────
-    # To update your IP: edit this file and save — Traefik reloads instantly.
-    # Use /128 for a single IPv6, /32 for a single IPv4.
-    admin-ip:
-      ipAllowList:
-        ipStrategy:
-          depth: 1   # Use X-Forwarded-For (real IP behind Cloudflare proxy)
-        sourceRange:
-          - "127.0.0.1/32"
-          - "10.0.0.0/8"
-          - "192.168.0.0/16"
-          - "YOUR_ADMIN_IP/128"
-
-    # ── ADMIN BASIC AUTH ────────────────────────────────────────────────────
-    # Password stored as bcrypt hash in .htpasswd (gitignored).
-    # To change password: htpasswd -nB admin > dynamic/.htpasswd
-    admin-auth:
-      basicAuth:
-        usersFile: /etc/traefik/dynamic/.htpasswd
-        realm: "pserenlo.com — Admin"
-
-    # CORS — adjust for your frontend domains
-    cors-api:
-      headers:
-        accessControlAllowMethods:
-          - GET
-          - POST
-          - PUT
-          - DELETE
-          - OPTIONS
-        accessControlAllowHeaders:
-          - "Authorization"
-          - "Content-Type"
-        accessControlAllowOriginList:
-          - "https://pserenlo.com"
-        accessControlMaxAge: 100
-        addVaryHeader: true
+    # CORS — uncomment and set your frontend domain when needed
+    # cors-api:
+    #   headers:
+    #     accessControlAllowMethods: [GET, POST, PUT, DELETE, OPTIONS]
+    #     accessControlAllowHeaders: ["Authorization", "Content-Type"]
+    #     accessControlAllowOriginList: ["https://YOUR_DOMAIN"]
+    #     accessControlMaxAge: 100
+    #     addVaryHeader: true
 
     # Compress responses
     compress:

@@ -1,0 +1,26 @@
+# Admin access control — copy to admin-access.yml and fill in your values.
+# This file is gitignored. Never commit admin-access.yml.
+#
+# To update your IP: edit admin-access.yml and save — Traefik reloads instantly.
+# No container restart needed.
+
+http:
+  middlewares:
+    # IP allowlist for all admin interfaces
+    # Use /128 for a single IPv6, /32 for a single IPv4.
+    admin-ip:
+      ipAllowList:
+        ipStrategy:
+          depth: 1   # Use X-Forwarded-For (real IP behind Cloudflare proxy)
+        sourceRange:
+          - "127.0.0.1/32"
+          - "10.0.0.0/8"
+          - "192.168.0.0/16"
+          - "YOUR_IPV6_OR_IPV4/128"   # Your home/VPN IP
+
+    # Basic auth for the Traefik dashboard (no built-in auth)
+    # Generate hash: htpasswd -nB admin > dynamic/admin-access.yml
+    admin-auth:
+      basicAuth:
+        usersFile: /etc/traefik/dynamic/.htpasswd
+        realm: "Admin Area"
