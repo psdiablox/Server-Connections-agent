@@ -1,29 +1,36 @@
-Deploy a service stack from the infrastructure directory.
+Deploy a service stack with full tracking (Grafana annotation + Loki deploy log).
 
 **Usage:** `/deploy [service-path]`
 
-If `$ARGUMENTS` is provided, use it as the stack path (e.g., `infrastructure/core/traefik`). Otherwise, list available stacks and ask which one to deploy.
+The correct deploy flow is: **commit locally → push to GitHub → pull on server → deploy**.
+Never deploy directly from local files — the server must pull from GitHub first.
 
-## Steps to follow:
+## Steps:
 
-1. **Identify stack**: Use `$ARGUMENTS` if provided. Otherwise run `find infrastructure -name "docker-compose.yml" | sort` and ask the user to choose.
+1. **Identify stack**: Use `$ARGUMENTS` if provided (e.g., `infrastructure/core/traefik`). Otherwise run `find infrastructure -name "docker-compose.yml" | sort` and ask which one.
 
-2. **Pre-flight checks**:
-   - Verify `.env` file exists alongside `docker-compose.yml`. If missing, show the `.env.example` contents and prompt the user to create it before proceeding.
-   - Run `docker compose -f {stack}/docker-compose.yml config` to validate syntax. Show any errors.
-   - Check that required external networks exist: `docker network ls | grep -E "proxy|monitoring|socket-proxy"`
+2. **Check local state**:
+   - `git status` — ensure no uncommitted changes that should be deployed
+   - `git log --oneline -3` — confirm latest commit is pushed: `git push origin main` if needed
 
-3. **Pull images**: Run `docker compose -f {stack}/docker-compose.yml pull`
+3. **Pre-flight checks on server** (via `ssh -i ~/.ssh/server_key deploy@82.223.64.68`):
+   - `.env` file exists in the stack dir (if not, show `.env.example` and ask user to create it on server)
+   - `docker network ls | grep -E "proxy|monitoring|socket-proxy"` — networks exist
 
-4. **Deploy**: Run `docker compose -f {stack}/docker-compose.yml up -d --remove-orphans`
+4. **Deploy via tracked script**:
+   ```bash
+   ssh -i ~/.ssh/server_key deploy@82.223.64.68 \
+     "cd /opt/server && bash scripts/deploy-service.sh {stack}"
+   ```
+   This does: `git pull` → `docker compose pull` → `docker compose up -d` → writes to `/var/log/deploys.log` → posts Grafana annotation.
 
 5. **Verify**:
-   - `docker compose -f {stack}/docker-compose.yml ps` — check all containers are Up
-   - `docker compose -f {stack}/docker-compose.yml logs --tail=30` — check for errors
-   - If service is HTTP-exposed, attempt `curl -sI https://{subdomain}.{DOMAIN}` to verify Traefik routing
+   - `docker ps --filter name={service}` — container is Up
+   - `docker logs {container} --tail=20` — no errors
+   - `curl -sI https://{subdomain}.pserenlo.com` — HTTP 2xx or 3xx (not 000 or 403 for public services)
 
-6. **Security check**: Confirm all containers in the stack have `no-new-privileges` set and no raw Docker socket mounted.
+6. **Confirm in Grafana**: Check `https://grafana.pserenlo.com` → Deploy History dashboard — new entry should appear.
 
-7. **Commit**: If any config files were modified during this process, commit them with `git add` (excluding .env) and create a meaningful commit.
+7. **If config files were changed** during this session, stage and commit them (never commit `.env`, `admin-access.yml`, `.htpasswd`).
 
-Report what was deployed, the container statuses, and any issues found.
+Report: what was deployed, container status, any errors, and the Grafana annotation URL.

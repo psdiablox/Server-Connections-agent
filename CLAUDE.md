@@ -4,98 +4,178 @@
 
 You are a senior DevOps/SecOps engineer responsible for maintaining a production-grade, security-hardened personal server infrastructure. This repository is the **single source of truth** for everything running on the server. Every change must be version-controlled, reproducible, and documented. If it isn't in this repo, it doesn't exist officially.
 
+## Server
+
+| Property | Value |
+|----------|-------|
+| IP | `82.223.64.68` |
+| OS | Debian 13 (Trixie) |
+| SSH user | `deploy` (passwordless sudo, key-only) |
+| Root login | Disabled |
+| Repo on server | `/opt/server` (git clone of this repo) |
+| SSH key | `~/.ssh/server_key` |
+
+```bash
+ssh -i ~/.ssh/server_key deploy@82.223.64.68
+```
+
 ## Repository Structure
 
 ```
 .
-├── .claude/commands/         # Claude Code slash commands for daily operations
-├── CLAUDE.md                 # This file — loaded on every session
+├── .claude/commands/         # Slash commands for daily operations
+├── CLAUDE.md                 # This file
 ├── README.md
-├── .gitignore                # Secrets and generated files excluded
-├── .env.example              # Top-level global variables template
-├── Makefile                  # Unified operations interface
+├── .gitignore                # .env, .htpasswd, admin-access.yml excluded
+├── .env.example              # Global variables template
+├── Makefile                  # Operations interface
 ├── scripts/
-│   ├── bootstrap.sh          # First-time server provisioning
-│   ├── harden.sh             # Security hardening (idempotent)
-│   ├── backup.sh             # Backup all persistent volumes
-│   ├── update.sh             # Pull & restart all services
+│   ├── bootstrap.sh          # First-time server provisioning (Docker, user, networks)
+│   ├── harden.sh             # Security hardening — run SEPARATELY after verifying SSH
+│   ├── deploy-service.sh     # Tracked deploy: git pull + docker up + Loki + Grafana annotation
+│   ├── backup.sh             # Volume backup to /opt/backups/
+│   ├── update.sh             # Pull & restart all stacks (no tracking)
 │   └── networks.sh           # Create Docker external networks
 ├── infrastructure/
-│   ├── core/                 # Must start FIRST — no external dependencies
-│   │   ├── socket-proxy/     # Docker socket proxy (Traefik reads through this)
-│   │   ├── traefik/          # Reverse proxy + HTTPS + routing
-│   │   ├── crowdsec/         # Intrusion prevention + banning
-│   │   └── portainer/        # Container management UI (admin only)
-│   ├── monitoring/           # Observability stack
-│   │   ├── prometheus/       # Metrics scraping
-│   │   ├── grafana/          # Dashboards
-│   │   ├── loki/             # Log aggregation
-│   │   └── promtail/         # Log shipping
-│   ├── services/             # Private, non-public-facing services
-│   │   ├── vaultwarden/      # Password manager
-│   │   └── uptime-kuma/      # Uptime monitoring
-│   └── apps/                 # Public-facing applications
+│   ├── core/
+│   │   ├── socket-proxy/     # Docker API proxy (security layer)
+│   │   ├── traefik/          # Reverse proxy v3.6 — HTTPS, routing, TLS
+│   │   │   └── dynamic/
+│   │   │       ├── middlewares.yml       # Committed — no secrets
+│   │   │       ├── admin-access.yml      # GITIGNORED — real IP + auth
+│   │   │       ├── admin-access.yml.example
+│   │   │       └── .htpasswd             # GITIGNORED — bcrypt hash
+│   │   ├── crowdsec/         # IPS + Traefik bouncer
+│   │   └── portainer/        # Container management UI
+│   ├── monitoring/           # Prometheus, Grafana, Loki, Promtail, cAdvisor, node-exporter
+│   ├── services/             # Vaultwarden, Uptime Kuma
+│   └── apps/                 # Public-facing apps (empty — add yours here)
 ├── security/
-│   ├── fail2ban/             # Ban rules and filters
-│   ├── ssh/                  # Hardened sshd_config template
-│   ├── ufw/                  # Firewall setup script
-│   └── sysctl/               # Kernel hardening parameters
-└── docs/
-    ├── architecture.md
-    ├── security.md
-    └── runbooks/             # Step-by-step operational procedures
+│   ├── fail2ban/             # SSH + Traefik ban rules
+│   ├── ssh/sshd_config.hardened
+│   └── sysctl/99-hardening.conf
+└── docs/runbooks/
 ```
 
 ## Core Principles (Non-Negotiable)
 
-1. **Security over convenience** — Never skip a security step to make something faster to set up.
-2. **Infrastructure as Code** — Every config lives in this repo. Zero undocumented manual steps.
-3. **Secrets never in git** — `.env` files are gitignored. Only `.env.example` files are committed.
-4. **Principle of least privilege** — Containers run as non-root. Services get only the permissions they need.
-5. **Network isolation** — Each stack uses its own internal network. Only services that need Traefik routing join the `proxy` network.
-6. **Immutable infrastructure** — Prefer replacing containers over modifying running ones.
-7. **Audit trail** — Every infra change gets a git commit with a meaningful message.
+1. **Security over convenience** — Never skip a security step.
+2. **Infrastructure as Code** — Every config in this repo. Zero undocumented steps.
+3. **Secrets never in git** — `.env`, `.htpasswd`, `admin-access.yml` are gitignored. Only `.example` files committed.
+4. **Least privilege** — Containers run non-root. Services get only what they need.
+5. **Network isolation** — Each stack has its own internal network. Only services that need Traefik join `proxy`.
+6. **Deploy with tracking** — Use `deploy-service.sh` / `make ship` so every deploy is recorded in Grafana + Loki.
+7. **Audit trail** — Every infra change gets a git commit. No anonymous edits.
+
+## The Deploy Flow
+
+```
+1. Make changes locally
+2. git add . && git commit -m "..."
+3. git push origin main
+4. On server: cd /opt/server && bash scripts/deploy-service.sh infrastructure/{path}
+```
+
+**Tracked deploy (records in Grafana + Loki):**
+```bash
+make ship SERVICE=infrastructure/core/traefik
+# or directly:
+ssh deploy@82.223.64.68 "cd /opt/server && bash scripts/deploy-service.sh infrastructure/core/traefik"
+```
+
+**Untracked deploy (no history):**
+```bash
+make deploy SERVICE=infrastructure/core/traefik
+```
+
+Always use tracked deploys unless you have a specific reason not to.
+
+## Gitignored Secrets — What Lives Where
+
+| File | Location | What it contains |
+|------|----------|-----------------|
+| `.env` | Each stack dir | Passwords, tokens, domain |
+| `admin-access.yml` | `traefik/dynamic/` | Admin IPv6 + basic auth middleware |
+| `.htpasswd` | `traefik/dynamic/` | bcrypt hash for Traefik dashboard |
+
+To change the admin IP (when moving between locations):
+```bash
+ssh deploy@82.223.64.68
+nano /opt/server/infrastructure/core/traefik/dynamic/admin-access.yml
+# Edit the IPv6/IPv4 line — Traefik hot-reloads instantly, no restart needed
+```
 
 ## Docker Architecture
 
-### External Networks (created by `scripts/networks.sh`)
+### External Networks
 
-| Network | Purpose | Who joins |
-|---------|---------|-----------|
-| `proxy` | Traefik routing | All services needing HTTP/HTTPS exposure |
-| `monitoring` | Internal metrics/logs | Prometheus, Grafana, Loki, exporters |
-| `socket-proxy` | Traefik↔Docker API | socket-proxy, Traefik only |
+| Network | Purpose |
+|---------|---------|
+| `proxy` | All services needing Traefik routing |
+| `monitoring` | Prometheus, Grafana, Loki, exporters |
+| `socket-proxy` | Docker socket proxy (security isolation) |
 
-**Never expose the raw Docker socket to any container directly.** Always use the socket-proxy.
+**Note:** Traefik uses a **direct Docker socket mount** (`:ro`) due to Docker API version incompatibility with socket-proxy on Docker 29 + Debian 13. Socket-proxy still runs for other uses.
 
-### Naming Conventions
+### Services Running
 
-- Docker networks: lowercase, hyphen-separated (e.g., `proxy`, `socket-proxy`)
-- Container names: `{stack}-{service}` (e.g., `traefik-proxy`, `monitoring-grafana`)
-- Traefik labels: always define `traefik.enable`, `router.rule`, `service.loadbalancer.server.port`
-- Volumes: `{stack}_{volume}` (e.g., `traefik_certs`, `monitoring_grafana-data`)
+| Container | Image | URL |
+|-----------|-------|-----|
+| `traefik-proxy` | traefik:v3.6 | `traefik.pserenlo.com` (admin) |
+| `socket-proxy` | tecnativa/docker-socket-proxy | internal |
+| `portainer` | portainer/portainer-ce | `portainer.pserenlo.com` (admin) |
+| `crowdsec` | crowdsecurity/crowdsec | internal |
+| `crowdsec-traefik-bouncer` | fbonalair/traefik-crowdsec-bouncer | internal |
+| `monitoring-prometheus` | prom/prometheus | internal |
+| `monitoring-grafana` | grafana/grafana | `grafana.pserenlo.com` (admin) |
+| `monitoring-loki` | grafana/loki | internal |
+| `monitoring-promtail` | grafana/promtail | internal |
+| `monitoring-cadvisor` | gcr.io/cadvisor/cadvisor | internal |
+| `monitoring-node-exporter` | prom/node-exporter | internal |
+| `vaultwarden` | vaultwarden/server | `vault.pserenlo.com` |
+| `uptime-kuma` | louislam/uptime-kuma | `status.pserenlo.com` |
+
+### Grafana Dashboards
+
+| Dashboard | What it shows |
+|-----------|--------------|
+| **Server Health** | CPU, RAM, disk, network — from node-exporter |
+| **Docker and system monitoring** | Per-container CPU/memory |
+| **Deploy History** | Every deploy: service, commit, timestamp (from Loki `{job="deploys"}`) |
+
+Deploy annotations appear as vertical lines on all dashboards.
+
+## Security Architecture
+
+| Layer | What it does |
+|-------|-------------|
+| UFW | Deny all. SSH open. Ports 80/443 open to **Cloudflare IPs only** |
+| fail2ban | Bans after 3 failed SSH attempts |
+| CrowdSec | Behavioral IPS + community blocklists via Traefik bouncer |
+| Traefik middlewares | Rate limiting, security headers, admin IP allowlist |
+| `admin-access.yml` | Real admin IPv6 — gitignored, hot-reloaded by Traefik |
+| `.htpasswd` | Basic auth on Traefik dashboard only — gitignored |
+| Docker | `no-new-privileges:true`, non-root, resource limits on all containers |
+
+**All admin services** (Traefik, Grafana, Portainer, Vaultwarden, Uptime Kuma) are behind `admin-ip@file` middleware — accessible only from your home IPv6.
 
 ## Adding a New Service — Checklist
 
 ```
-[ ] 1. Create directory: infrastructure/{env}/{service-name}/
-[ ] 2. Create docker-compose.yml using the service template below
-[ ] 3. Create .env.example with ALL required variables documented
-[ ] 4. Copy .env.example → .env and fill in real values (never commit .env)
-[ ] 5. Assign correct networks (internal + proxy if public-facing)
-[ ] 6. Add Traefik labels if HTTP-exposed
-[ ] 7. Set resource limits (memory, CPU) in deploy.resources
-[ ] 8. Run: docker compose config  (validate syntax)
-[ ] 9. Run: docker compose up -d   (deploy)
-[ ] 10. Verify: docker compose ps && docker compose logs --tail=30
-[ ] 11. Test the endpoint / functionality
-[ ] 12. Commit: git add . && git commit -m "feat(services): add {service-name}"
+[ ] 1. Create infrastructure/{category}/{name}/docker-compose.yml
+[ ] 2. Create infrastructure/{category}/{name}/.env.example
+[ ] 3. Add internal network + proxy network (if HTTP-exposed)
+[ ] 4. Add Traefik labels with admin-ip@file if admin-only
+[ ] 5. Add no-new-privileges + resource limits
+[ ] 6. Copy .env.example → .env on the server, fill in values
+[ ] 7. git add && git commit && git push
+[ ] 8. make ship SERVICE=infrastructure/{category}/{name}
+[ ] 9. Verify in Grafana Deploy History dashboard
 ```
 
-### Service Template (docker-compose.yml)
+## Service Template (docker-compose.yml)
 
 ```yaml
-# infrastructure/{env}/{service}/docker-compose.yml
 name: {service}
 
 networks:
@@ -113,10 +193,10 @@ services:
     image: {image}:{tag}
     container_name: {service}-app
     restart: unless-stopped
-    user: "1000:1000"         # non-root
+    user: "1000:1000"
     networks:
       - internal
-      - proxy                 # only if HTTP-exposed
+      - proxy
     volumes:
       - data:/data
     environment:
@@ -126,7 +206,7 @@ services:
       - "traefik.http.routers.{service}.rule=Host(`{subdomain}.${DOMAIN}`)"
       - "traefik.http.routers.{service}.entrypoints=websecure"
       - "traefik.http.routers.{service}.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.{service}.middlewares=secure-headers@file,rate-limit@file"
+      - "traefik.http.routers.{service}.middlewares=admin-ip@file,secure-headers@file,rate-limit@file"
       - "traefik.http.services.{service}.loadbalancer.server.port={port}"
     security_opt:
       - no-new-privileges:true
@@ -137,67 +217,10 @@ services:
           cpus: "0.5"
 ```
 
-## Security Requirements
-
-Every service MUST satisfy all of the following. Flag any violation immediately.
-
-- [ ] `no-new-privileges:true` in `security_opt`
-- [ ] Non-root user (verify with `docker inspect --format='{{.Config.User}}'`)
-- [ ] No `privileged: true` unless absolutely required and documented
-- [ ] No raw Docker socket mount
-- [ ] Resource limits defined
-- [ ] Secrets via environment variables from `.env`, never hardcoded
-- [ ] Exposed only through Traefik (no direct port exposure to host unless necessary)
-- [ ] Health check defined where supported by the image
-- [ ] Traefik middlewares: `secure-headers` and `rate-limit` applied to all public routes
-- [ ] Admin routes (Traefik dashboard, Grafana, Portainer) behind IP whitelist middleware
-
-## Operations
-
-### Deploy Stack
-```bash
-make deploy SERVICE=infrastructure/core/traefik
-# or use slash command: /deploy
-```
-
-### View Logs
-```bash
-make logs SERVICE=infrastructure/core/traefik
-docker compose -f infrastructure/core/traefik/docker-compose.yml logs -f
-```
-
-### Update All Services
-```bash
-make update
-# Pulls new images, restarts changed containers, commits image digests
-```
-
-### Backup
-```bash
-make backup
-# Backs up named volumes to /opt/backups/{date}/
-```
-
-### Security Audit
-```bash
-make audit
-# or use slash command: /audit
-```
-
-### Rollback a Service
-```bash
-cd infrastructure/{path}
-docker compose down
-docker compose pull --no-cache  # or pin previous image tag
-docker compose up -d
-```
-
 ## Git Workflow
 
 ```
-main                # Current production state
-├── feature/        # New services or features
-└── fix/            # Bug/config fixes
+main  ← production state, always deployable
 ```
 
 Commit message format:
@@ -205,78 +228,91 @@ Commit message format:
 {type}({scope}): {description}
 
 Types: feat, fix, security, docs, refactor, chore
-Scope: core, monitoring, services, apps, security, scripts
-
-Examples:
-feat(services): add vaultwarden password manager
-security(core): harden Traefik TLS configuration
-fix(monitoring): correct Prometheus scrape interval
+Scopes: core, monitoring, services, apps, security, scripts
 ```
 
 **Before every commit:**
-1. Verify no `.env` files are staged: `git diff --cached --name-only | grep -i env`
-2. Verify no secrets/tokens in staged files: `git diff --cached | grep -iE 'password|secret|token|key' | grep '^+'`
-3. Run `docker compose config` for any changed compose files
+1. `git diff --cached --name-only | grep -E '\.env$|admin-access|htpasswd'` — abort if any secrets staged
+2. `docker compose config` for any changed compose files
 
-## Available Slash Commands
+**Never add Co-Authored-By or any Claude/Anthropic attribution to commits.**
 
-| Command | Description |
-|---------|-------------|
-| `/deploy` | Deploy or redeploy a service stack |
-| `/status` | Show health of all running services |
-| `/audit` | Run comprehensive security audit |
-| `/backup` | Check backup status or trigger backup |
-| `/harden` | Verify and apply security hardening |
-| `/new-service` | Scaffold a new service from template |
+## Bootstrapping a New Server
 
-## Environment Variables & Secrets
+```bash
+# 1. Copy SSH key to new server
+ssh-copy-id -i ~/.ssh/server_key.pub root@NEW_IP
 
-### Global variables (top-level `.env`)
+# 2. Run bootstrap (installs Docker, creates deploy user, copies SSH key, creates networks)
+ssh -i ~/.ssh/server_key root@NEW_IP "bash -s" < scripts/bootstrap.sh
+
+# 3. Verify deploy user SSH works BEFORE hardening
+ssh -i ~/.ssh/server_key deploy@NEW_IP "echo works"
+
+# 4. ONLY if step 3 succeeded — harden
+ssh -i ~/.ssh/server_key deploy@NEW_IP "sudo bash -s" < scripts/harden.sh
+
+# 5. Clone repo on server
+ssh -i ~/.ssh/server_key deploy@NEW_IP "git clone git@github.com:psdiablox/Server-Connections-agent.git /opt/server"
+
+# 6. Create .env files and admin-access.yml on server (copy from examples)
+# 7. Deploy stacks in order
 ```
-DOMAIN=yourdomain.com
-ACME_EMAIL=admin@yourdomain.com
-TZ=Europe/Madrid
+
+## Common Operations
+
+```bash
+# Tracked deploy (use this by default)
+make ship SERVICE=infrastructure/services/vaultwarden
+
+# View all service status
+make status
+
+# Security audit
+make audit
+
+# Backup all volumes
+make backup
+
+# Check deploy history (last 10 deploys)
+ssh deploy@82.223.64.68 "tail -10 /var/log/deploys.log | python3 -m json.tool"
 ```
-
-### Per-stack `.env` files
-Each stack in `infrastructure/*/` has its own `.env.example`. Copy to `.env` before deploying.
-
-### Secret Rotation
-1. Update `.env` file with new secret
-2. Restart affected service: `docker compose up -d --force-recreate`
-3. Verify service health
-4. Document rotation in git commit (value only in `.env`, not in commit)
 
 ## Emergency Procedures
 
 ### Service is down
 ```bash
-docker compose -f infrastructure/{path}/docker-compose.yml ps
-docker compose -f infrastructure/{path}/docker-compose.yml logs --tail=100
+ssh deploy@82.223.64.68
+cd /opt/server
+docker compose -f infrastructure/{path}/docker-compose.yml logs --tail=50
 docker compose -f infrastructure/{path}/docker-compose.yml restart
 ```
 
-### Complete server restore
-See `docs/runbooks/disaster-recovery.md`
+### Locked out (IP changed)
+```bash
+ssh deploy@82.223.64.68
+nano /opt/server/infrastructure/core/traefik/dynamic/admin-access.yml
+# Update IPv6 — Traefik reloads in seconds
+```
+
+### Portainer first-setup timed out
+```bash
+ssh deploy@82.223.64.68 "docker restart portainer"
+# Then visit portainer.pserenlo.com within 5 minutes
+```
 
 ### Certificate issues
-See `docs/runbooks/certificate-renewal.md`
+```bash
+docker logs traefik-proxy 2>&1 | grep -i acme
+```
 
-### Security breach suspected
-1. Immediately: `ufw deny in on eth0` (block all incoming)
-2. Check: `fail2ban-client status` and `docker ps`
-3. Review: `docker compose -f infrastructure/core/traefik/docker-compose.yml logs`
-4. See: `docs/runbooks/incident-response.md`
+## Slash Commands
 
-## Critical File Reference
-
-| File | Purpose |
-|------|---------|
-| `infrastructure/core/traefik/traefik.yml` | Traefik static config |
-| `infrastructure/core/traefik/dynamic/middlewares.yml` | Reusable Traefik middlewares |
-| `security/fail2ban/jail.local` | Fail2ban ban rules |
-| `security/ssh/sshd_config.hardened` | SSH hardening template |
-| `security/sysctl/99-hardening.conf` | Kernel security parameters |
-| `scripts/bootstrap.sh` | First-time server setup |
-| `scripts/harden.sh` | Security hardening (idempotent) |
-| `Makefile` | All operations commands |
+| Command | Description |
+|---------|-------------|
+| `/deploy` | Deploy or redeploy a service stack |
+| `/status` | Full health overview of all services |
+| `/audit` | Comprehensive security audit |
+| `/backup` | Check backup status or trigger backup |
+| `/harden` | Verify or reapply security hardening |
+| `/new-service` | Scaffold a new service from template |

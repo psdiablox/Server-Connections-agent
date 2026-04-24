@@ -1,45 +1,81 @@
-Scaffold a new service from the standard template.
+Scaffold a new service from the standard template and deploy it with tracking.
 
-**Usage:** `/new-service`
+**Usage:** `/new-service [category/name]`
 
-If `$ARGUMENTS` is provided, parse it for service name and category (e.g., "services/myapp" or "apps/portfolio").
+If `$ARGUMENTS` is provided (e.g., `services/nextcloud` or `apps/portfolio`), use it. Otherwise ask.
 
 ## Steps:
 
-1. **Gather information** — ask the user:
-   - Service name (e.g., `nextcloud`, `gitea`, `portfolio`)
-   - Category: `core`, `services`, or `apps`
-   - Docker image + tag (e.g., `nextcloud:28-apache`)
-   - Internal port the container listens on
-   - Should it be HTTP-exposed via Traefik? (y/n)
-   - Should it be admin-only (IP-restricted)? (y/n)
-   - Approximate memory limit (e.g., 512M, 1G)
-   - Any required environment variables?
+### 1. Gather information
+Ask the user:
+- Service name (e.g., `nextcloud`, `gitea`, `portfolio`)
+- Category: `services` (private) or `apps` (public-facing) or `core`
+- Docker image + tag
+- Port the container listens on internally
+- Should it be HTTP-exposed via Traefik? (y/n)
+- Should it be admin-only (IP-restricted to your IPv6)? (y/n — default yes for safety)
+- Memory limit (e.g., `512M`, `1G`)
+- Required environment variables?
 
-2. **Create directory structure**:
-   ```
-   infrastructure/{category}/{service-name}/
-   ├── docker-compose.yml
-   └── .env.example
-   ```
+### 2. Generate files
 
-3. **Generate `docker-compose.yml`** using the template from CLAUDE.md, filled in with the collected values. Include:
-   - `internal` network (always)
-   - `proxy` network (if HTTP-exposed)
-   - Traefik labels (if HTTP-exposed)
-   - `admin-ip@file` middleware (if admin-only)
-   - `security_opt: [no-new-privileges:true]`
-   - Resource limits
-   - `restart: unless-stopped`
+**`infrastructure/{category}/{name}/docker-compose.yml`** using the template from CLAUDE.md.
+Key requirements:
+- `internal` network always
+- `proxy` network if HTTP-exposed
+- `admin-ip@file` middleware if admin-only (this is the default — only remove for truly public services)
+- `secure-headers@file` and `rate-limit@file` on all routes
+- `no-new-privileges:true` in `security_opt`
+- Resource limits (`memory`, `cpus`)
+- `restart: unless-stopped`
 
-4. **Generate `.env.example`** listing all variables with inline comments explaining each.
+**`infrastructure/{category}/{name}/.env.example`** listing every variable with inline comment.
 
-5. **Show the generated files** to the user for review before writing.
+### 3. Show generated files for review
 
-6. **Write files** once user confirms.
+Show both files to the user before writing. Ask for confirmation.
 
-7. **Next steps** — remind the user:
-   - Copy `.env.example` → `.env` and fill in values
-   - Add DNS record for `{subdomain}.domain.com` pointing to server IP
-   - Deploy with: `make deploy SERVICE=infrastructure/{category}/{service-name}`
-   - Commit: `git add infrastructure/{category}/{service-name}/ && git commit -m "feat({category}): add {service-name}"`
+### 4. Write files locally and commit
+
+```bash
+git add infrastructure/{category}/{name}/
+git commit -m "feat({category}): add {name}"
+git push origin main
+```
+
+### 5. Set up on server
+
+```bash
+# On server — create .env from example
+ssh -i ~/.ssh/server_key deploy@82.223.64.68 \
+  "cp /opt/server/infrastructure/{category}/{name}/.env.example \
+      /opt/server/infrastructure/{category}/{name}/.env"
+```
+
+Then tell the user: **edit `.env` on the server** with real values before deploying:
+```bash
+ssh -i ~/.ssh/server_key deploy@82.223.64.68 \
+  "nano /opt/server/infrastructure/{category}/{name}/.env"
+```
+
+### 6. Deploy with tracking
+
+```bash
+ssh -i ~/.ssh/server_key deploy@82.223.64.68 \
+  "cd /opt/server && bash scripts/deploy-service.sh infrastructure/{category}/{name}"
+```
+
+### 7. Verify
+
+- Container is Up: `docker ps --filter name={name}`
+- Logs clean: `docker logs {name} --tail=20`
+- URL responds: `curl -sI https://{subdomain}.pserenlo.com`
+- Deploy History in Grafana shows the new entry
+
+### 8. DNS reminder
+
+If needed, remind the user to add a DNS A record in Cloudflare:
+- Type: A
+- Name: `{subdomain}`
+- Content: `82.223.64.68`
+- Proxy: orange (proxied)

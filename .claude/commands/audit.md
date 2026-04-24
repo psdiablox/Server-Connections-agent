@@ -2,58 +2,97 @@ Run a comprehensive security audit of the server infrastructure.
 
 **Usage:** `/audit`
 
-Perform all checks systematically and report findings grouped by severity: CRITICAL, HIGH, MEDIUM, LOW, INFO.
+Connect via `ssh -i ~/.ssh/server_key deploy@82.223.64.68`. Report findings grouped by severity: CRITICAL, HIGH, MEDIUM, LOW, INFO.
 
-## Checks to perform:
+## Checks:
 
-### Network & Firewall
-- Run `ss -tlnp` or `netstat -tlnp` — list all listening ports. Flag any unexpected open ports.
-- Run `ufw status verbose` — verify only 22, 80, 443 (+ custom SSH port) are allowed.
-- Check for containers with `ports:` that expose to host directly (bypassing Traefik).
+### 1. Firewall (UFW)
+```bash
+sudo ufw status verbose
+```
+Expected:
+- Default: deny incoming, allow outgoing
+- Port 22: open to Anywhere (SSH)
+- Ports 80/443: open to **Cloudflare IP ranges ONLY** (not 0.0.0.0/0)
+- Flag any other open ports
 
-### Docker Security
-- For each running container, check:
-  - `docker inspect --format='{{.Name}} privileged={{.HostConfig.Privileged}}' {id}` — flag any `true`
-  - `docker inspect --format='{{.Name}} user={{.Config.User}}' {id}` — flag empty user (root)
-  - `docker inspect --format='{{.Name}} network={{.HostConfig.NetworkMode}}' {id}` — flag `host`
-  - Check for raw Docker socket mounts: `docker inspect --format='{{.Name}} {{.HostConfig.Binds}}' {id} | grep docker.sock`
-- Run `docker ps --format '{{.Names}}\t{{.Ports}}'` — flag any direct port bindings on 0.0.0.0
+### 2. SSH Hardening
+```bash
+sudo sshd -T | grep -E "permitrootlogin|passwordauthentication|pubkeyauthentication|maxauthtries"
+```
+Expected: `permitrootlogin no`, `passwordauthentication no`, `maxauthtries 3`
 
-### Access Control
-- Check fail2ban: `fail2ban-client status` — list active jails and banned IPs
-- Review recent SSH login attempts: `journalctl -u ssh --since "24 hours ago" | grep -i "failed\|invalid"` (last 20 lines)
-- Check CrowdSec decisions: `docker exec crowdsec cscli decisions list` (if running)
+### 3. fail2ban
+```bash
+sudo fail2ban-client status && sudo fail2ban-client status sshd
+```
+Expected: sshd jail active. Show currently banned IPs.
 
-### Secrets & Config
-- `git diff --cached --name-only | grep -iE '\.env$'` — flag if any .env staged
-- `find . -name "*.env" -not -name "*.example"` — list any .env files in repo (should only be .env.example)
-- Check traefik acme.json permissions: `stat infrastructure/core/traefik/letsencrypt/acme.json 2>/dev/null`
+### 4. CrowdSec
+```bash
+docker exec crowdsec cscli decisions list
+docker exec crowdsec cscli bouncers list
+```
+Expected: bouncer `traefik-bouncer` connected.
 
-### System
-- Check unattended-upgrades: `systemctl is-active unattended-upgrades`
-- Pending security updates: `apt-get -s upgrade 2>/dev/null | grep -i security | wc -l`
-- Check disk space: `df -h` — flag >80% usage
+### 5. Docker Container Security
+For each running container:
+```bash
+# Privileged (should only be cadvisor)
+docker ps -q | xargs docker inspect --format '{{.Name}}: privileged={{.HostConfig.Privileged}}' | grep true
 
-### Traefik Config
-- Review `infrastructure/core/traefik/dynamic/middlewares.yml` — confirm `secure-headers`, `rate-limit`, and `admin-ip` are defined
-- Verify all public routes use at minimum `secure-headers@file` and `rate-limit@file` middleware
+# Host network (should be none)
+docker ps -q | xargs docker inspect --format '{{.Name}}: {{.HostConfig.NetworkMode}}' | grep host
+
+# Docker socket mounts (only traefik-proxy and portainer allowed — both :ro)
+docker ps -q | xargs docker inspect --format '{{.Name}}: {{.HostConfig.Binds}}' | grep docker.sock
+
+# no-new-privileges check
+docker ps -q | xargs docker inspect --format '{{.Name}}: {{.HostConfig.SecurityOpt}}'
+```
+
+### 6. Traefik Middleware on All Routes
+Verify `admin-ip@file` is applied to every service:
+```bash
+for c in traefik-proxy portainer monitoring-grafana vaultwarden uptime-kuma; do
+  docker inspect $c --format "{{.Name}}: {{index .Config.Labels \"traefik.http.routers.$(docker inspect $c --format '{{range $k,$v := .Config.Labels}}{{if contains $k \"middlewares\"}}{{$k}}{{end}}{{end}}').middlewares\"}}"
+done
+```
+Every admin service must have `admin-ip@file`.
+
+### 7. Secrets Hygiene
+```bash
+# No .env files in git
+cd /opt/server && git ls-files | grep -E '\.env$|htpasswd|admin-access\.yml$'
+
+# No secrets in staged files
+git diff --cached --name-only | grep -iE '\.env$|htpasswd|admin-access'
+
+# admin-access.yml exists (gitignored but required)
+ls /opt/server/infrastructure/core/traefik/dynamic/admin-access.yml
+```
+
+### 8. Exposed Ports (host level)
+```bash
+sudo ss -tlnp | grep -v 127.0.0.1
+```
+Expected: only 22 (ssh), 80 (docker/traefik), 443 (docker/traefik).
+
+### 9. System Security
+```bash
+sysctl kernel.randomize_va_space    # expect 2
+sysctl net.ipv4.tcp_syncookies      # expect 1
+sysctl kernel.dmesg_restrict        # expect 1
+systemctl is-active unattended-upgrades
+```
 
 ## Report format:
-
 ```
-## Security Audit Report — {date}
+## Security Audit — {date}
 
-### CRITICAL
-- [issue] — [remediation]
-
-### HIGH
-- [issue] — [remediation]
-
-### MEDIUM / LOW / INFO
-- ...
+### CRITICAL / HIGH / MEDIUM / LOW / INFO
+- [finding] — [remediation]
 
 ### Summary
-X issues found: Y critical, Z high, ...
+X issues: Y critical, Z high, ...
 ```
-
-If all checks pass, say so explicitly.
