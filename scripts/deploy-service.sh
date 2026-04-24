@@ -24,6 +24,37 @@ COMMIT_SHORT=$(git log -1 --format="%h")
 COMMIT_MSG=$(git log -1 --format="%s")
 DEPLOYER=$(whoami)
 
+# ─── Record deploy (must be defined before deploy_stack calls it) ─────────────
+_record_deploy() {
+  local svc="$1"
+  local svc_name="${svc##*/}"
+  local ts
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  local entry
+  entry=$(python3 -c "import json; print(json.dumps({
+    'time': '${ts}',
+    'level': 'info',
+    'event': 'deploy',
+    'service': '${svc_name}',
+    'stack': '${svc}',
+    'commit': '${COMMIT_SHORT}',
+    'commit_full': '${COMMIT_FULL}',
+    'commit_msg': '${COMMIT_MSG}',
+    'deployer': '${DEPLOYER}'
+  }))")
+  echo "$entry" | sudo tee -a "$DEPLOY_LOG" > /dev/null
+
+  local grafana_pass
+  grafana_pass=$(grep GRAFANA_ADMIN_PASSWORD "${REPO_DIR}/infrastructure/monitoring/.env" | cut -d= -f2)
+  docker run --rm --network monitoring alpine/curl -sf -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"text\":\"Deploy: ${svc_name} @ ${COMMIT_SHORT} — ${COMMIT_MSG}\",\"tags\":[\"deploy\",\"${svc_name}\"]}" \
+    "http://admin:${grafana_pass}@monitoring-grafana:3000/api/annotations" > /dev/null \
+    && info "Grafana annotation created" \
+    || warn "Grafana annotation failed (non-fatal)"
+}
+
 # ─── Deploy ──────────────────────────────────────────────────────────────────
 deploy_stack() {
   local svc="$1"
@@ -47,40 +78,5 @@ if [[ "$SERVICE" == "--all" ]]; then
 else
   deploy_stack "$SERVICE"
 fi
-
-# ─── Record deploy ───────────────────────────────────────────────────────────
-_record_deploy() {
-  local svc="$1"
-  local svc_name="${svc##*/}"
-  local ts
-  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  local ts_ms
-  ts_ms=$(date +%s%3N)
-
-  # Write to deploy log (picked up by Promtail → Loki)
-  local entry
-  entry=$(python3 -c "import json; print(json.dumps({
-    'time': '${ts}',
-    'level': 'info',
-    'event': 'deploy',
-    'service': '${svc_name}',
-    'stack': '${svc}',
-    'commit': '${COMMIT_SHORT}',
-    'commit_full': '${COMMIT_FULL}',
-    'commit_msg': '${COMMIT_MSG}',
-    'deployer': '${DEPLOYER}'
-  }))")
-  echo "$entry" | sudo tee -a "$DEPLOY_LOG" > /dev/null
-
-  # Post Grafana annotation
-  local grafana_pass
-  grafana_pass=$(grep GRAFANA_ADMIN_PASSWORD "${REPO_DIR}/infrastructure/monitoring/.env" | cut -d= -f2)
-  docker run --rm --network monitoring alpine/curl -sf -X POST \
-    -H "Content-Type: application/json" \
-    -d "{\"text\":\"Deploy: ${svc_name} @ ${COMMIT_SHORT} — ${COMMIT_MSG}\",\"tags\":[\"deploy\",\"${svc_name}\"]}" \
-    "http://admin:${grafana_pass}@monitoring-grafana:3000/api/annotations" > /dev/null \
-    && info "Grafana annotation created" \
-    || warn "Grafana annotation failed (non-fatal)"
-}
 
 info "Deployment complete. View history at https://grafana.pserenlo.com"
