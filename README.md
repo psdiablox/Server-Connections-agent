@@ -1,72 +1,141 @@
 # Server Infrastructure
 
-Production-grade, security-hardened personal server infrastructure defined as code.
+This repository contains everything needed to run and manage a personal server at `pserenlo.com`. All services run in Docker containers behind a secure reverse proxy with automatic HTTPS.
 
-## Quick Start
+---
 
-```bash
-# 1. Provision a fresh Debian server (as root)
-bash scripts/bootstrap.sh
+## What's Running
 
-# 2. Copy and fill .env files for each stack you want to deploy
-cp infrastructure/core/traefik/.env.example infrastructure/core/traefik/.env
-# edit .env...
+| Service | Address | What it's for |
+|---------|---------|---------------|
+| **Vaultwarden** | vault.pserenlo.com | Password manager (self-hosted Bitwarden) |
+| **Uptime Kuma** | status.pserenlo.com | Monitors that services are online |
+| **Grafana** | grafana.pserenlo.com | Server dashboards — CPU, memory, disk, deploy history |
+| **Portainer** | portainer.pserenlo.com | Visual interface to manage Docker containers |
+| **Traefik** | traefik.pserenlo.com | The reverse proxy — routes traffic and manages HTTPS certs |
 
-# 3. Create Docker networks
-make networks
+> All services except Vaultwarden are only accessible from your home IP address.
 
-# 4. Deploy core stack (required first)
-make deploy SERVICE=infrastructure/core/socket-proxy
-make deploy SERVICE=infrastructure/core/traefik
+---
 
-# 5. Deploy other stacks
-make deploy SERVICE=infrastructure/monitoring
-make deploy SERVICE=infrastructure/services/vaultwarden
+## How Deploys Work
+
+Every change to the server goes through this flow:
+
+```
+1. Edit files on your computer
+       ↓
+2. Save to GitHub  (git push)
+       ↓
+3. Server pulls from GitHub  (git pull)
+       ↓
+4. Server restarts the affected service
+       ↓
+5. Deploy is recorded in Grafana with timestamp + commit
 ```
 
-## Stack Layout
+This means **GitHub is always the source of truth**. The server never has changes that aren't in this repo.
 
-| Stack | Path | URL |
-|-------|------|-----|
-| Reverse Proxy | `infrastructure/core/traefik` | `traefik.yourdomain.com` (admin) |
-| Container UI | `infrastructure/core/portainer` | `portainer.yourdomain.com` (admin) |
-| IPS | `infrastructure/core/crowdsec` | internal |
-| Metrics | `infrastructure/monitoring` | `grafana.yourdomain.com` (admin) |
-| Password Manager | `infrastructure/services/vaultwarden` | `vault.yourdomain.com` |
-| Uptime Monitor | `infrastructure/services/uptime-kuma` | `status.yourdomain.com` |
+---
 
-## Common Operations
+## Making a Change and Deploying It
+
+### Step 1 — Save your changes to GitHub
 
 ```bash
-make status                                    # Health of all services
-make logs SERVICE=infrastructure/core/traefik  # Tail logs
-make update                                    # Pull & restart all stacks
-make backup                                    # Backup all volumes
-make audit                                     # Security audit
+git add .
+git commit -m "describe what you changed"
+git push origin main
 ```
 
-## Claude Code Slash Commands
+### Step 2 — Deploy on the server
 
-| Command | Description |
-|---------|-------------|
-| `/deploy` | Deploy or redeploy a stack |
-| `/status` | Service health overview |
-| `/audit` | Security audit |
-| `/backup` | Backup status or trigger |
-| `/harden` | Verify/apply hardening |
-| `/new-service` | Scaffold a new service |
+```bash
+make ship SERVICE=infrastructure/services/vaultwarden
+```
 
-## Security
+Replace `infrastructure/services/vaultwarden` with the path of whatever you changed. This command:
+- Connects to the server
+- Downloads your latest changes from GitHub
+- Restarts the affected service
+- Records the deploy in Grafana (timestamp, what changed, which commit)
 
-- All traffic enters via Traefik (HTTPS only, TLS 1.2+)
-- Docker API access via socket proxy (read-only, scoped)
-- Fail2ban + CrowdSec for intrusion prevention
-- SSH: key-only, no root login
-- UFW: deny all, allow 22/80/443 only
-- Containers: non-root, no-new-privileges, resource-limited
+### Deploying everything at once
 
-Secrets are never committed. See `.env.example` files for required variables.
+```bash
+make ship SERVICE=--all
+```
 
-## Architecture
+---
 
-See [docs/architecture.md](docs/architecture.md) for the full stack diagram and security layers.
+## Viewing Deploy History
+
+Open **Grafana** → `grafana.pserenlo.com` → **Deploy History** dashboard.
+
+You'll see a table of every deploy ever made: when it happened, which service, and which code change triggered it. You'll also see vertical lines on the Server Health dashboard showing exactly when each deploy happened relative to CPU and memory usage.
+
+---
+
+## Adding a New Service
+
+Use the built-in assistant:
+
+```bash
+/new-service
+```
+
+It will ask you a few questions (what is it, which port does it use, should it be private?) and generate all the necessary files automatically.
+
+---
+
+## Common Commands
+
+```bash
+make status          # See all running services and their health
+make audit           # Security check — firewall, SSH, containers
+make backup          # Back up all data to /opt/backups/ on the server
+make logs SERVICE=infrastructure/services/vaultwarden   # View service logs
+```
+
+---
+
+## SSH Access
+
+```bash
+ssh -i ~/.ssh/server_key deploy@82.223.64.68
+```
+
+---
+
+## Security Overview
+
+- All traffic goes through Cloudflare before reaching the server
+- Ports 80 and 443 only accept connections from Cloudflare — direct server access is blocked at the firewall
+- Admin panels are only accessible from your home IP address
+- SSH only accepts key-based login — passwords are disabled
+- Every container runs with the minimum permissions needed
+- Automated security updates are enabled on the server
+
+---
+
+## Repository Layout
+
+```
+infrastructure/
+├── core/           # The foundation: reverse proxy, security, container management
+├── monitoring/     # Dashboards, metrics, logs
+├── services/       # Private services (Vaultwarden, Uptime Kuma)
+└── apps/           # Public-facing apps — add yours here
+
+scripts/
+├── bootstrap.sh    # Sets up a brand new server from scratch
+├── harden.sh       # Applies security hardening
+├── deploy-service.sh  # The deploy script used by `make ship`
+└── backup.sh       # Backs up all data
+```
+
+---
+
+## Secrets
+
+Passwords and API keys are **never stored in this repository**. They live only on the server in files that git ignores (`.env`, `admin-access.yml`). The repository only contains templates (`.env.example`) showing which variables are needed.
