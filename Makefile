@@ -1,4 +1,4 @@
-.PHONY: help bootstrap harden networks deploy up down logs update status audit backup clean
+.PHONY: help bootstrap harden networks deploy ship up down logs update status audit backup clean
 
 SHELL := /bin/bash
 BASE  := $(shell pwd)
@@ -13,7 +13,11 @@ help:
 	@echo "    make harden             Apply security hardening (idempotent)"
 	@echo "    make networks           Create required Docker external networks"
 	@echo ""
-	@echo "  Service Operations:"
+	@echo "  Deploy (with history tracking):"
+	@echo "    make ship    SERVICE=path/to/stack    git pull + deploy + Grafana annotation"
+	@echo "    make ship    SERVICE=--all            Deploy all stacks"
+	@echo ""
+	@echo "  Service Operations (no history tracking):"
 	@echo "    make deploy  SERVICE=path/to/stack    Deploy a stack"
 	@echo "    make up      SERVICE=path/to/stack    Start a stack"
 	@echo "    make down    SERVICE=path/to/stack    Stop a stack"
@@ -34,6 +38,9 @@ help:
 	@echo "    make deploy SERVICE=infrastructure/core/traefik"
 	@echo "    make logs   SERVICE=infrastructure/monitoring"
 	@echo ""
+
+ship: _require-service
+	@bash scripts/deploy-service.sh $(SERVICE)
 
 # ─── Setup ──────────────────────────────────────────────────────────────────
 

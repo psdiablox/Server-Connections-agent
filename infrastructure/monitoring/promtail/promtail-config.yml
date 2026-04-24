@@ -16,6 +16,24 @@ scrape_configs:
           job: varlogs
           __path__: /var/log/*.log
 
+  - job_name: deploys
+    static_configs:
+      - targets: ["localhost"]
+        labels:
+          job: deploys
+          __path__: /var/log/deploys.log
+    pipeline_stages:
+      - json:
+          expressions:
+            event: event
+            service: service
+            commit: commit
+            commit_msg: commit_msg
+            deployer: deployer
+      - labels:
+          event:
+          service:
+
   - job_name: docker
     static_configs:
       - targets: ["localhost"]
