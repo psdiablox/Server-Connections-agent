@@ -1,0 +1,92 @@
+name: trading-db
+
+networks:
+  db:
+    driver: bridge
+    internal: true      # postgres cannot reach internet
+  internet:
+    driver: bridge      # collector can reach internet
+  proxy:
+    external: true      # Traefik routing
+
+volumes:
+  postgres_data:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: trading-db-postgres
+    restart: unless-stopped
+    networks:
+      - db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+
+  collector:
+    build: ./collector
+    container_name: trading-db-collector
+    restart: unless-stopped
+    networks:
+      - db
+      - internet
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - MARKET_KEYWORDS=${MARKET_KEYWORDS:-BTC}
+      - PRICE_POLL_INTERVAL=${PRICE_POLL_INTERVAL:-1.0}
+      - DISCOVERY_INTERVAL=${DISCOVERY_INTERVAL:-30.0}
+      - CHECKPOINT_INTERVAL=${CHECKPOINT_INTERVAL:-60.0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+
+  frontend:
+    build: ./frontend
+    container_name: trading-frontend
+    restart: unless-stopped
+    networks:
+      - db
+      - proxy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - SECRET_KEY=${SECRET_KEY}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.trading-frontend.rule=Host(`data.${DOMAIN}`)"
+      - "traefik.http.routers.trading-frontend.entrypoints=websecure"
+      - "traefik.http.routers.trading-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.trading-frontend.middlewares=secure-headers@file,rate-limit@file"
+      - "traefik.http.services.trading-frontend.loadbalancer.server.port=8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
