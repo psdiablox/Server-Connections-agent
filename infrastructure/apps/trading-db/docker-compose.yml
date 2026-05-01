@@ -78,7 +78,7 @@ services:
       - "traefik.http.routers.trading-frontend.rule=Host(`data.${DOMAIN}`)"
       - "traefik.http.routers.trading-frontend.entrypoints=websecure"
       - "traefik.http.routers.trading-frontend.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.trading-frontend.middlewares=secure-headers@file,rate-limit@file"
+      - "traefik.http.routers.trading-frontend.middlewares=admin-ip@file,secure-headers@file,rate-limit@file"
       - "traefik.http.services.trading-frontend.loadbalancer.server.port=8000"
     depends_on:
       postgres:
