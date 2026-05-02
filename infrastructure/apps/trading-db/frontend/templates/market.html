@@ -400,6 +400,19 @@ function resetZoom() {
     c.options.scales.x.time.stepSize = tickStep((MARKET_END - MARKET_START) / 1000);
     c.update();
   });
+  fitBarThickness();
+  _volChart?.update();
+}
+
+// Recompute bar pixel-width so each bar fills exactly one 15s time slot
+function fitBarThickness() {
+  if (!_volChart) return;
+  const area = _volChart.chartArea;
+  if (!area || !area.width) return;
+  const range = (_volChart.scales.x.max - _volChart.scales.x.min) / 1000;  // seconds
+  if (!range) return;
+  const px = Math.max(1, (15 * area.width) / range);  // pixels per 15-second bucket
+  _volChart.data.datasets.forEach(ds => { ds.barThickness = px; });
 }
 
 // Sync volume chart x-axis to match price chart after zoom/pan
@@ -408,8 +421,9 @@ function syncVolume() {
   _volChart.options.scales.x.min = _priceChart.scales.x.min;
   _volChart.options.scales.x.max = _priceChart.scales.x.max;
   applyTickStep();
+  fitBarThickness();
   _volChart.update();
-  _priceChart.update('none');  // refresh ticks without full redraw
+  _priceChart.update('none');
 }
 
 // ── Volume chart (synced panel below price) ───────────────────────────────
@@ -461,7 +475,6 @@ function renderVolumeChart(volume, snaps) {
       scales: {
         x: {
           type:'time', stacked:true,
-          offset:true,
           min: MARKET_START,
           max: MARKET_END,
           time:{ unit:'second', stepSize:30, displayFormats:{ second:'h:mm:ss' } },
@@ -485,6 +498,8 @@ function renderVolumeChart(volume, snaps) {
       }
     }
   });
+  // Set initial bar widths to exactly 15s after layout is computed
+  requestAnimationFrame(() => { fitBarThickness(); _volChart.update(); });
 }
 
 // ── Order book depth chart ─────────────────────────────────────────────────
