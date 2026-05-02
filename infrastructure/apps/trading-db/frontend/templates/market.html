@@ -287,9 +287,11 @@ function syncVolume() {
 
 // ── Volume chart (synced panel below price) ───────────────────────────────
 function renderVolumeChart(volume, snaps) {
-  if (!volume.length) return;
+  if (!snaps.length) return;
 
-  // Use numeric ms timestamps so the time scale renders bars correctly
+  const BUCKET = 30_000; // 30 seconds in ms
+
+  // Map actual trade volume into buckets
   const map = {};
   volume.forEach(v => {
     const ms = new Date(v.bucket).getTime();
@@ -298,18 +300,25 @@ function renderVolumeChart(volume, snaps) {
     else                                          map[ms].down += v.volume;
   });
 
-  const keys   = Object.keys(map).map(Number).sort();
-  const xMin   = snaps.length ? new Date(snaps[0].ts).getTime() : undefined;
-  const xMax   = snaps.length ? new Date(snaps[snaps.length-1].ts).getTime() : undefined;
+  // Generate EVERY 30-second bucket in the market window (fill gaps with 0)
+  // This is critical: evenly-spaced data → Chart.js sizes every bar identically
+  const xMin = new Date(snaps[0].ts).getTime();
+  const xMax = new Date(snaps[snaps.length-1].ts).getTime();
+  const firstBucket = Math.floor(xMin / BUCKET) * BUCKET;
+  const allBuckets  = [];
+  for (let t = firstBucket; t <= xMax; t += BUCKET) allBuckets.push(t);
+
+  const upData   = allBuckets.map(k => ({ x:k, y: map[k]?.up   || 0 }));
+  const downData = allBuckets.map(k => ({ x:k, y: map[k]?.down || 0 }));
 
   _volChart = new Chart(document.getElementById('volumeChart'), {
     type:'bar',
     data: {
       datasets: [
-        { label:'Up',   data: keys.map(k => ({ x:k, y:map[k].up   })),
-          backgroundColor:'rgba(16,185,129,0.75)', stack:'v', maxBarThickness:24 },
-        { label:'Down', data: keys.map(k => ({ x:k, y:map[k].down })),
-          backgroundColor:'rgba(239,68,68,0.75)',  stack:'v', maxBarThickness:24 },
+        { label:'Up',   data: upData,   backgroundColor:'rgba(16,185,129,0.75)',
+          stack:'v', barPercentage:1.0, categoryPercentage:1.0 },
+        { label:'Down', data: downData, backgroundColor:'rgba(239,68,68,0.75)',
+          stack:'v', barPercentage:1.0, categoryPercentage:1.0 },
       ]
     },
     options: {
