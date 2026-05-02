@@ -348,7 +348,8 @@ function renderPriceChart(snaps, trades) {
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       // Reserve space below the chartArea for the time pill (drawn at bottom + 2..20)
-      layout: { padding: { bottom: 26 } },
+      // right:8 mirrored on volume chart so chartArea.right also aligns
+      layout: { padding: { bottom: 26, right: 8 } },
       plugins: {
         legend: {
           display: true, position: 'top',
@@ -399,9 +400,7 @@ function renderPriceChart(snaps, trades) {
         y: {
           min:0, max:1, grid:GRID,
           ticks:{ color:'#64748b', callback: v => v.toFixed(2) },
-          // Force fixed-width y-axis so chartArea.left matches the volume
-          // chart — keeps the two crosshair vertical lines pixel-aligned.
-          afterFit: s => { s.width = 70; },
+          afterFit(s) { s.width = 60; s.paddingTop = 0; s.paddingBottom = 0; },
         },
       }
     }
@@ -563,7 +562,7 @@ function renderVolumeChart(volume, snaps) {
       responsive:true, maintainAspectRatio:false, animation:false,
       // Reserve 26px below the chartArea for the volume pill (the crosshair
       // plugin draws it at chartArea.bottom + 2..20).
-      layout: { padding:{ top:4, bottom:26 } },
+      layout: { padding:{ top:4, bottom:26, right: 8 } },
       plugins: {
         legend: { display:false },
         // Disabled — the bottom pill already shows the bucket range and
@@ -589,8 +588,14 @@ function renderVolumeChart(volume, snaps) {
         },
         y: {
           stacked:true, beginAtZero:true, grid:GRID,
-          ticks:{ color:'#64748b', maxTicksLimit:3, callback: v => '$'+v.toFixed(0) },
-          afterFit: s => { s.width = 70; },   // match price chart for X-alignment
+          ticks:{
+            color:'#64748b', maxTicksLimit:3,
+            // Compact format to match price chart label width: $500k not $500000
+            callback: v => v >= 1000 ? '$'+(v/1000).toFixed(0)+'k'
+                       : v >= 1     ? '$'+v.toFixed(0)
+                       : '$0',
+          },
+          afterFit(s) { s.width = 60; s.paddingTop = 0; s.paddingBottom = 0; },
         },
       }
     }
