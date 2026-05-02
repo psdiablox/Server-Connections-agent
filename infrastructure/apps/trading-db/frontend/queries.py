@@ -135,6 +135,26 @@ async def get_book_depth(market_id: int, token_id: str) -> Optional[dict]:
     return {"bids": row["bids"], "asks": row["asks"]}
 
 
+async def get_data_gaps(market_id: int, threshold_sec: int = 5) -> list[dict]:
+    """Find time ranges in this market where snapshot polling stopped for
+    more than `threshold_sec` (collector should be polling at 1Hz).
+    Returns [{start, end, dur_sec}, ...]."""
+    rows = await _pool.fetch("""
+        WITH ordered AS (
+            SELECT ts, LAG(ts) OVER (ORDER BY ts) AS prev_ts
+            FROM polymarket.price_snapshots
+            WHERE market_id = $1
+        )
+        SELECT prev_ts AS start, ts AS gap_end,
+               EXTRACT(EPOCH FROM (ts - prev_ts))::int AS dur_sec
+        FROM ordered
+        WHERE prev_ts IS NOT NULL
+          AND EXTRACT(EPOCH FROM (ts - prev_ts)) > $2
+        ORDER BY prev_ts
+    """, market_id, threshold_sec)
+    return _fmt(rows)
+
+
 async def health_age() -> dict:
     """Return seconds-since-last for snapshots and trades. Used by /health."""
     row = await _pool.fetchrow("""

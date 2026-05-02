@@ -148,6 +148,49 @@ function cleanTicks(scale) {
   }
 }
 
+// ── Data-gap overlay plugin ────────────────────────────────────────────────
+// Draws translucent grey bands over time ranges where the collector lost
+// data. Renders on BOTH the price chart and the volume chart.
+let _dataGaps = [];   // [{start: ISO, gap_end: ISO, dur_sec: int}]
+
+const dataGapPlugin = {
+  id: 'dataGap',
+  beforeDatasetsDraw(chart) {
+    if (chart.canvas.id !== 'priceChart' && chart.canvas.id !== 'volumeChart') return;
+    if (!_dataGaps?.length) return;
+    const { ctx, scales: { x }, chartArea: ca } = chart;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top); ctx.clip();
+    for (const g of _dataGaps) {
+      const t0 = new Date(g.start).getTime();
+      const t1 = new Date(g.gap_end).getTime();
+      let x0 = x.getPixelForValue(t0);
+      let x1 = x.getPixelForValue(t1);
+      if (x1 < ca.left || x0 > ca.right) continue;
+      x0 = Math.max(x0, ca.left); x1 = Math.min(x1, ca.right);
+      // Hatched grey background
+      ctx.fillStyle = 'rgba(100, 116, 139, 0.18)';
+      ctx.fillRect(x0, ca.top, x1 - x0, ca.bottom - ca.top);
+      // Subtle red border on the price chart only, with a label
+      if (chart.canvas.id === 'priceChart') {
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
+        ctx.setLineDash([2, 3]);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x0 + 0.5, ca.top + 0.5, x1 - x0 - 1, ca.bottom - ca.top - 1);
+        ctx.setLineDash([]);
+        if (x1 - x0 > 50) {
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.85)';
+          ctx.font = '10px monospace';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+          ctx.fillText(`no data · ${g.dur_sec}s`, (x0 + x1) / 2, ca.top + 4);
+        }
+      }
+    }
+    ctx.restore();
+  }
+};
+Chart.register(dataGapPlugin);
+
 // ── Crosshair plugin ───────────────────────────────────────────────────────
 // Shared x-axis state in TIME-domain (ms) so both charts can render the line
 let _mouseOnPrice = false, _cursorX = null, _cursorY = null;
@@ -270,16 +313,18 @@ let _priceChart = null;
 let _volChart   = null;
 
 async function loadAll() {
-  const [snaps, trades, volume, depth, deltas] = await Promise.all([
+  const [snaps, trades, volume, depth, deltas, gaps] = await Promise.all([
     fetch(`/api/markets/${MID}/snapshots`).then(r => r.json()),
     fetch(`/api/markets/${MID}/trades`).then(r => r.json()),
     fetch(`/api/markets/${MID}/volume`).then(r => r.json()),
     fetch(`/api/markets/${MID}/depth`).then(r => r.json()),
     fetch(`/api/markets/${MID}/deltas`).then(r => r.json()),
+    fetch(`/api/markets/${MID}/gaps`).then(r => r.json()),
   ]);
+  _dataGaps = gaps || [];
   fillStats(snaps, trades);
   renderPriceChart(snaps, trades);
-  renderVolumeChart(volume, snaps);   // pass snaps for x-axis range alignment
+  renderVolumeChart(volume, snaps);
   renderDepthChart(depth);
   fillDeltas(deltas);
   fillTradesTable(trades);

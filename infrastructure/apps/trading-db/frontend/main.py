@@ -106,6 +106,11 @@ async def api_deltas(market_id: int, _=Depends(auth.require_auth)):
     return await queries.get_delta_summary(market_id)
 
 
+@app.get("/api/markets/{market_id}/gaps")
+async def api_gaps(market_id: int, _=Depends(auth.require_auth)):
+    return await queries.get_data_gaps(market_id)
+
+
 # ── Health endpoint (NO auth — Uptime Kuma polls this every minute) ────────
 # 200 → collector is recording fresh data.
 # 503 → snapshots stale OR trades stale (likely zombie WebSocket / dead poller).
