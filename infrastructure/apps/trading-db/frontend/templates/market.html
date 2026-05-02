@@ -20,7 +20,8 @@
     <a href="/markets" class="text-slate-500 hover:text-white text-sm transition mb-2 inline-block">← Markets</a>
     <h1 class="text-xl font-bold text-white">{{ market.question }}</h1>
     <div class="text-slate-400 text-sm mt-1">
-      {{ market.start_ts[11:16] }} – {{ market.end_ts[11:16] }} UTC · {{ market.start_ts[:10] }}
+      <span id="market-window-local">{{ market.start_ts[11:16] }}–{{ market.end_ts[11:16] }} UTC</span>
+      · {{ market.start_ts[:10] }}
     </div>
   </div>
   <div class="text-right">
@@ -30,8 +31,12 @@
       {% else %}
         <span class="badge-down text-sm px-3 py-1.5 rounded-lg font-bold">↓ RESOLVED DOWN</span>
       {% endif %}
+    {% elif market.is_live %}
+      <span class="badge-live text-sm px-3 py-1.5 rounded-lg font-bold animate-pulse">● LIVE</span>
+    {% elif market.is_upcoming %}
+      <span class="text-slate-400 text-sm px-3 py-1.5 rounded-lg border border-slate-600">◌ UPCOMING</span>
     {% else %}
-      <span class="badge-live text-sm px-3 py-1.5 rounded-lg font-bold">● LIVE</span>
+      <span class="text-slate-500 text-sm px-3 py-1.5 rounded-lg border border-slate-700">Ended</span>
     {% endif %}
   </div>
 </div>
@@ -56,7 +61,15 @@
     </div>
   </div>
   <!-- Price panel -->
-  <div style="height:300px; position:relative"><canvas id="priceChart"></canvas></div>
+  <div style="height:300px; position:relative">
+    <canvas id="priceChart"></canvas>
+    <div id="no-data-msg" style="display:none;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
+      <div class="text-center">
+        <div class="text-slate-400 text-sm mb-1">Collecting data…</div>
+        <div class="text-slate-600 text-xs">This market just started. Refresh in a few seconds.</div>
+      </div>
+    </div>
+  </div>
   <!-- Divider -->
   <div style="height:1px;background:#334155;margin:0 -0.25rem"></div>
   <!-- Volume panel — no x labels (shared with price), no top padding -->
@@ -110,6 +123,19 @@
 const MID = {{ market.id }};
 const GRID = { color: 'rgba(51,65,85,0.6)' };
 
+// Convert header window to local time
+(function() {
+  const start = new Date("{{ market.start_ts }}");
+  const end   = new Date("{{ market.end_ts }}");
+  const fmt   = d => d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  const utcS  = "{{ market.start_ts[11:16] }}";
+  const utcE  = "{{ market.end_ts[11:16] }}";
+  const el = document.getElementById('market-window-local');
+  if (el) el.innerHTML =
+    `<strong>${fmt(start)} – ${fmt(end)}</strong>` +
+    ` <span class="text-slate-500 text-xs">${utcS}–${utcE} UTC</span>`;
+})();
+
 // ── Utilities ──────────────────────────────────────────────────────────────
 function setText(id, v) { const e = document.getElementById(id); if (e) e.textContent = v; }
 
@@ -158,7 +184,11 @@ function fillStats(snaps, trades) {
 
 // ── Price chart ────────────────────────────────────────────────────────────
 function renderPriceChart(snaps, trades) {
-  if (!snaps.length) return;
+  if (!snaps.length) {
+    const msg = document.getElementById('no-data-msg');
+    if (msg) msg.style.display = 'flex';
+    return;
+  }
 
   // Lines
   const upData   = snaps.map(s => ({ x: s.ts, y: s.price }));

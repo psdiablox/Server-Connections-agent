@@ -4,7 +4,7 @@
 {% block content %}
 <div class="mb-8">
   <h1 class="text-2xl font-bold text-white mb-1">BTC 5-min Markets</h1>
-  <p class="text-slate-500 text-sm">All collected windows · newest first</p>
+  <p class="text-slate-500 text-sm">All collected windows · newest first · times shown in your local timezone</p>
 </div>
 
 <!-- Summary stats -->
@@ -19,9 +19,7 @@
   </div>
   <div class="card p-5">
     <div class="stat-label">Total Volume</div>
-    <div class="stat-value text-white">
-      ${{ "%.0f"|format(markets|sum(attribute='total_volume') or 0) }}
-    </div>
+    <div class="stat-value text-white">${{ "%.0f"|format(markets|sum(attribute='total_volume') or 0) }}</div>
   </div>
 </div>
 
@@ -30,7 +28,7 @@
   <table class="w-full text-sm">
     <thead>
       <tr class="border-b border-border text-slate-400 text-xs tracking-widest uppercase">
-        <th class="text-left px-5 py-3">Window</th>
+        <th class="text-left px-5 py-3">Window (local)</th>
         <th class="text-left px-5 py-3">Status</th>
         <th class="text-right px-5 py-3">Last Price</th>
         <th class="text-right px-5 py-3">Spread</th>
@@ -43,10 +41,17 @@
     {% for m in markets %}
     <tr class="border-b border-border hover:bg-slate-700/30 transition cursor-pointer"
         onclick="location.href='/markets/{{ m.id }}'">
+
+      <!-- Window time — rendered by JS into local time -->
       <td class="px-5 py-4">
-        <div class="text-white font-medium">{{ m.start_ts[11:16] }} – {{ m.end_ts[11:16] }} UTC</div>
+        <div class="font-medium text-white utc-window"
+             data-start="{{ m.start_ts }}" data-end="{{ m.end_ts }}">
+          {{ m.start_ts[11:16] }}–{{ m.end_ts[11:16] }} UTC
+        </div>
         <div class="text-slate-500 text-xs">{{ m.start_ts[:10] }}</div>
       </td>
+
+      <!-- Status -->
       <td class="px-5 py-4">
         {% if m.resolved and m.outcome %}
           {% if 'up' in m.outcome|lower %}
@@ -54,40 +59,50 @@
           {% else %}
             <span class="badge-down text-xs px-2 py-1 rounded font-bold">↓ DOWN</span>
           {% endif %}
-        {% elif m.window_ended %}
-          <span class="text-slate-500 text-xs px-2 py-1 rounded border border-slate-700">Ended</span>
-        {% else %}
+        {% elif m.is_live %}
           <span class="badge-live text-xs px-2 py-1 rounded font-bold animate-pulse">● LIVE</span>
+        {% elif m.is_upcoming %}
+          <span class="text-slate-400 text-xs px-2 py-1 rounded border border-slate-600">◌ UPCOMING</span>
+        {% else %}
+          <span class="text-slate-500 text-xs px-2 py-1 rounded border border-slate-700">Ended</span>
         {% endif %}
       </td>
+
       <td class="px-5 py-4 text-right font-mono">
-        {% if m.last_price %}
-          <span class="text-white">{{ "%.3f"|format(m.last_price) }}</span>
-        {% else %}
-          <span class="text-slate-600">—</span>
-        {% endif %}
+        {% if m.last_price %}<span class="text-white">{{ "%.3f"|format(m.last_price) }}</span>
+        {% else %}<span class="text-slate-600">—</span>{% endif %}
       </td>
       <td class="px-5 py-4 text-right font-mono">
         {% if m.last_bid and m.last_ask %}
           <span class="text-slate-400">{{ "%.3f"|format(m.last_ask - m.last_bid) }}</span>
-        {% else %}
-          <span class="text-slate-600">—</span>
-        {% endif %}
+        {% else %}<span class="text-slate-600">—</span>{% endif %}
       </td>
       <td class="px-5 py-4 text-right text-slate-300">{{ m.trade_count or 0 }}</td>
-      <td class="px-5 py-4 text-right text-slate-300">
-        ${{ "%.0f"|format(m.total_volume or 0) }}
-      </td>
+      <td class="px-5 py-4 text-right text-slate-300">${{ "%.0f"|format(m.total_volume or 0) }}</td>
       <td class="px-5 py-4 text-right text-slate-600 text-lg">›</td>
     </tr>
     {% else %}
     <tr>
       <td colspan="7" class="px-5 py-12 text-center text-slate-500">
-        No markets collected yet. The collector will detect the current BTC 5-min window within 30 seconds.
+        No markets collected yet. The collector detects the current BTC 5-min window within 30 seconds.
       </td>
     </tr>
     {% endfor %}
     </tbody>
   </table>
 </div>
+
+<script>
+// Convert UTC timestamps to local time on every row
+document.querySelectorAll('.utc-window').forEach(el => {
+  const start = new Date(el.dataset.start);
+  const end   = new Date(el.dataset.end);
+  const fmt   = d => d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  const utcStart = el.dataset.start.slice(11,16);
+  const utcEnd   = el.dataset.end.slice(11,16);
+  el.innerHTML =
+    `<span class="font-semibold">${fmt(start)} – ${fmt(end)}</span>` +
+    `<span class="text-slate-500 text-xs ml-2">${utcStart}–${utcEnd} UTC</span>`;
+});
+</script>
 {% endblock %}

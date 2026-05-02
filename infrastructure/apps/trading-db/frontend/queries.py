@@ -46,7 +46,9 @@ async def get_markets() -> list[dict]:
         SELECT
             m.id, m.question, m.start_ts, m.end_ts,
             m.resolved, m.outcome, m.yes_outcome, m.no_outcome,
-            (m.end_ts < NOW()) AS window_ended,
+            (m.end_ts <= NOW())                           AS window_ended,
+            (m.start_ts <= NOW() AND m.end_ts > NOW())    AS is_live,
+            (m.start_ts > NOW())                          AS is_upcoming,
             COUNT(t.id)::int          AS trade_count,
             COALESCE(SUM(t.size), 0)::float AS total_volume,
             l.price::float            AS last_price,
@@ -57,7 +59,7 @@ async def get_markets() -> list[dict]:
         LEFT JOIN latest l ON l.market_id = m.id
         GROUP BY m.id, m.question, m.start_ts, m.end_ts,
                  m.resolved, m.outcome, m.yes_outcome, m.no_outcome,
-                 l.price, l.best_bid, l.best_ask, window_ended
+                 l.price, l.best_bid, l.best_ask
         ORDER BY m.start_ts DESC
     """)
     return _fmt(rows)
@@ -65,7 +67,14 @@ async def get_markets() -> list[dict]:
 
 async def get_market(market_id: int) -> Optional[dict]:
     row = await _pool.fetchrow(
-        "SELECT * FROM polymarket.markets WHERE id = $1", market_id
+        """
+        SELECT *,
+            (end_ts <= NOW())                        AS window_ended,
+            (start_ts <= NOW() AND end_ts > NOW())   AS is_live,
+            (start_ts > NOW())                       AS is_upcoming
+        FROM polymarket.markets WHERE id = $1
+        """,
+        market_id,
     )
     if not row:
         return None
