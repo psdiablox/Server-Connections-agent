@@ -430,9 +430,60 @@ function resetZoom() {
   _volChart?.update();
 }
 
-// No explicit barThickness — fights Chart.js's stacked-bar layout and causes
-// the visual overlap. Using barPercentage instead (set on each dataset).
-function fitBarThickness() { /* no-op kept to avoid signature changes */ }
+function fitBarThickness() { /* no-op — bars rendered manually below */ }
+
+// ── Custom volume-bar renderer ─────────────────────────────────────────────
+// Chart.js's stacked-bar layout on a time scale was unreliable (overlap or
+// gaps depending on zoom). We draw bars directly: each bar is centred on
+// its 15s bucket timestamp and exactly one slot wide. Chart.js still owns
+// the axes, scales, zoom, tooltip, hit testing.
+const volumeBarsPlugin = {
+  id: 'volumeBars',
+  beforeDatasetsDraw(chart) {
+    if (chart.canvas.id !== 'volumeChart') return;
+    const { ctx, chartArea: ca, scales: { x: xs, y: ys } } = chart;
+    const up   = chart.data.datasets[0]?.data || [];
+    const down = chart.data.datasets[1]?.data || [];
+
+    // Slot width in pixels = distance between two adjacent 15s ticks
+    const slotPx = Math.abs(
+      xs.getPixelForValue(MARKET_START + 15_000) - xs.getPixelForValue(MARKET_START)
+    );
+    if (!slotPx) return;
+    const barW = Math.max(1, slotPx - 1);  // 1px guarantee gap between bars
+    const y0   = ys.getPixelForValue(0);
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top); ctx.clip();
+
+    for (let i = 0; i < up.length; i++) {
+      const t = up[i].x;
+      const cx = xs.getPixelForValue(t);
+      const left = cx - barW / 2;
+      if (left + barW < ca.left || left > ca.right) continue;
+
+      const upVal   = up[i].y   || 0;
+      const downVal = down[i].y || 0;
+      if (upVal === 0 && downVal === 0) continue;
+
+      const yUp   = ys.getPixelForValue(upVal);
+      const yDown = ys.getPixelForValue(upVal + downVal);
+
+      // Up bar sits at bottom (anchored on $0)
+      if (upVal > 0) {
+        ctx.fillStyle = 'rgba(16,185,129,0.85)';
+        ctx.fillRect(left, yUp, barW, y0 - yUp);
+      }
+      // Down stacked on top of Up
+      if (downVal > 0) {
+        ctx.fillStyle = 'rgba(239,68,68,0.85)';
+        ctx.fillRect(left, yDown, barW, yUp - yDown);
+      }
+    }
+    ctx.restore();
+  }
+};
+Chart.register(volumeBarsPlugin);
 
 // Sync volume chart x-axis to match price chart after zoom/pan
 function syncVolume() {
@@ -477,9 +528,13 @@ function renderVolumeChart(volume, snaps) {
     data: {
       datasets: [
         { label:'Up',   data: upData,   backgroundColor:'rgba(16,185,129,0.75)',
-          stack:'v', barPercentage:0.92, categoryPercentage:1.0 },
+          stack:'v', barPercentage:0.92, categoryPercentage:1.0,
+          backgroundColor: 'rgba(0,0,0,0)',  // transparent — drawn by volumeBarsPlugin
+          borderColor: 'rgba(0,0,0,0)' },
         { label:'Down', data: downData, backgroundColor:'rgba(239,68,68,0.75)',
-          stack:'v', barPercentage:0.92, categoryPercentage:1.0 },
+          stack:'v', barPercentage:0.92, categoryPercentage:1.0,
+          backgroundColor: 'rgba(0,0,0,0)',  // transparent — drawn by volumeBarsPlugin
+          borderColor: 'rgba(0,0,0,0)' },
       ]
     },
     options: {
