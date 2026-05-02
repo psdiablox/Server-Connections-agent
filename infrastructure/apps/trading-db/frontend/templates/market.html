@@ -367,13 +367,17 @@ function renderPriceChart(snaps, trades) {
     }
   });
 
-  // Wire up crosshair mouse tracking
+  // Wire up crosshair mouse tracking — keep coords in CSS pixels (chartArea space)
   const canvas = document.getElementById('priceChart');
+  let _rafScheduled = false;
   canvas.addEventListener('mousemove', e => {
     const rect = canvas.getBoundingClientRect();
-    _cursorY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    _cursorY = e.clientY - rect.top;
     _mouseOnPrice = true;
-    _priceChart.draw();
+    if (!_rafScheduled) {
+      _rafScheduled = true;
+      requestAnimationFrame(() => { _rafScheduled = false; _priceChart.draw(); });
+    }
   });
   canvas.addEventListener('mouseleave', () => {
     _mouseOnPrice = false; _cursorY = null; _priceChart.draw();
