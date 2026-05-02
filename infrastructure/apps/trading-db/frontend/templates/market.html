@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% block title %}{{ market.question[:40] }} — Dashboard{% endblock %}
 
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<style>
+  .chart-card:fullscreen        { background: #1e293b; padding: 2rem; display: flex; flex-direction: column; }
+  .chart-card:fullscreen canvas { flex: 1; }
+  .chart-btn { background: transparent; border: 1px solid #334155; color: #64748b; border-radius: 0.375rem;
+               padding: 0.15rem 0.5rem; font-size: 0.65rem; cursor: pointer; transition: all .15s; }
+  .chart-btn:hover { border-color: #3b82f6; color: #3b82f6; }
+</style>
+{% endblock %}
+
 {% block content %}
 <!-- Header -->
 <div class="flex items-start justify-between mb-6">
@@ -12,8 +24,8 @@
     </div>
   </div>
   <div class="text-right">
-    {% if market.resolved %}
-      {% if market.outcome and 'up' in market.outcome|lower %}
+    {% if market.resolved and market.outcome %}
+      {% if 'up' in market.outcome|lower %}
         <span class="badge-up text-sm px-3 py-1.5 rounded-lg font-bold">↑ RESOLVED UP</span>
       {% else %}
         <span class="badge-down text-sm px-3 py-1.5 rounded-lg font-bold">↓ RESOLVED DOWN</span>
@@ -24,109 +36,103 @@
   </div>
 </div>
 
-<!-- Key stats row (filled by JS) -->
-<div class="grid grid-cols-5 gap-4 mb-6" id="stats-row">
+<!-- Key stats -->
+<div class="grid grid-cols-5 gap-4 mb-6">
   <div class="card p-4"><div class="stat-label">Last Price</div><div class="stat-value text-white" id="s-price">—</div></div>
-  <div class="card p-4"><div class="stat-label">Best Bid</div><div class="stat-value text-up" id="s-bid">—</div></div>
-  <div class="card p-4"><div class="stat-label">Best Ask</div><div class="stat-value text-down" id="s-ask">—</div></div>
+  <div class="card p-4"><div class="stat-label">Best Bid</div><div class="stat-value text-emerald-400" id="s-bid">—</div></div>
+  <div class="card p-4"><div class="stat-label">Best Ask</div><div class="stat-value text-red-400" id="s-ask">—</div></div>
   <div class="card p-4"><div class="stat-label">Spread</div><div class="stat-value text-slate-300" id="s-spread">—</div></div>
   <div class="card p-4"><div class="stat-label">Total Volume</div><div class="stat-value text-white" id="s-vol">—</div></div>
 </div>
 
-<!-- Charts grid -->
-<div class="grid grid-cols-3 gap-4 mb-4">
-  <!-- Price + Trades: spans 2 cols -->
-  <div class="card p-5 col-span-2">
-    <div class="flex items-center justify-between mb-4">
-      <span class="text-white font-semibold text-sm">Price · Best Bid/Ask · Trades</span>
-      <div class="flex gap-3 text-xs text-slate-500">
-        <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-blue-400 inline-block"></span>Mid</span>
-        <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-emerald-400 inline-block"></span>Bid</span>
-        <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-red-400 inline-block"></span>Ask</span>
-        <span class="flex items-center gap-1"><span class="w-2 h-2 bg-emerald-400 rounded-full inline-block"></span>Buy</span>
-        <span class="flex items-center gap-1"><span class="w-2 h-2 bg-red-400 rounded-full inline-block"></span>Sell</span>
-      </div>
+<!-- Price + Trades chart (full width) -->
+<div class="card p-5 mb-4 chart-card" id="price-card">
+  <div class="flex items-center justify-between mb-3">
+    <span class="text-white font-semibold text-sm">Price · Best Bid/Ask · Trades</span>
+    <div class="flex items-center gap-2">
+      <span class="text-slate-500 text-xs">Scroll to zoom · Drag to pan</span>
+      <button class="chart-btn" onclick="resetZoom()">Reset zoom</button>
+      <button class="chart-btn" onclick="openFullscreen('price-card')">⛶ Fullscreen</button>
     </div>
-    <div style="height:300px"><canvas id="priceChart"></canvas></div>
   </div>
-
-  <!-- Volume -->
-  <div class="card p-5">
-    <div class="text-white font-semibold text-sm mb-4">Volume (30s buckets)</div>
-    <div style="height:300px"><canvas id="volumeChart"></canvas></div>
-  </div>
+  <div style="height:320px"><canvas id="priceChart"></canvas></div>
 </div>
 
-<div class="grid grid-cols-3 gap-4 mb-6">
+<div class="grid grid-cols-3 gap-4 mb-4">
+  <!-- Volume -->
+  <div class="card p-5 chart-card" id="vol-card">
+    <div class="flex items-center justify-between mb-3">
+      <span class="text-white font-semibold text-sm">Volume (30s buckets)</span>
+      <button class="chart-btn" onclick="openFullscreen('vol-card')">⛶</button>
+    </div>
+    <div style="height:260px"><canvas id="volumeChart"></canvas></div>
+  </div>
+
   <!-- Order Book Depth -->
-  <div class="card p-5 col-span-2">
-    <div class="flex items-center justify-between mb-4">
-      <span class="text-white font-semibold text-sm">Order Book Depth (latest snapshot)</span>
-      <div class="flex gap-3 text-xs text-slate-500">
-        <span class="flex items-center gap-1"><span class="w-3 h-3 bg-emerald-400/30 border border-emerald-400 inline-block rounded"></span>Bid</span>
-        <span class="flex items-center gap-1"><span class="w-3 h-3 bg-red-400/30 border border-red-400 inline-block rounded"></span>Ask</span>
-      </div>
+  <div class="card p-5 col-span-2 chart-card" id="depth-card">
+    <div class="flex items-center justify-between mb-3">
+      <span class="text-white font-semibold text-sm">Order Book Depth</span>
+      <button class="chart-btn" onclick="openFullscreen('depth-card')">⛶</button>
     </div>
     <div style="height:260px"><canvas id="depthChart"></canvas></div>
   </div>
-
-  <!-- Delta stats -->
-  <div class="card p-5">
-    <div class="text-white font-semibold text-sm mb-4">Order Book Activity</div>
-    <div class="space-y-4 mt-6" id="delta-stats">
-      <div class="flex justify-between text-sm">
-        <span class="text-slate-400">Total deltas</span>
-        <span class="text-white font-mono" id="d-total">—</span>
-      </div>
-      <div class="flex justify-between text-sm">
-        <span class="text-slate-400">Bid adds</span>
-        <span class="text-up font-mono" id="d-bid">—</span>
-      </div>
-      <div class="flex justify-between text-sm">
-        <span class="text-slate-400">Ask adds</span>
-        <span class="text-down font-mono" id="d-ask">—</span>
-      </div>
-      <div class="flex justify-between text-sm">
-        <span class="text-slate-400">Removals (size=0)</span>
-        <span class="text-slate-300 font-mono" id="d-rem">—</span>
-      </div>
-    </div>
-  </div>
 </div>
 
-<!-- Trades table -->
-<div class="card overflow-hidden">
-  <div class="px-5 py-4 border-b border-border">
-    <span class="text-white font-semibold text-sm">Trade History</span>
-    <span class="text-slate-500 text-xs ml-2" id="trade-count"></span>
+<!-- Delta stats + Trade table -->
+<div class="grid grid-cols-4 gap-4 mb-6">
+  <div class="card p-5">
+    <div class="text-white font-semibold text-sm mb-4">Order Book Activity</div>
+    <div class="space-y-3 mt-2">
+      <div class="flex justify-between text-sm"><span class="text-slate-400">Total deltas</span><span class="text-white font-mono" id="d-total">—</span></div>
+      <div class="flex justify-between text-sm"><span class="text-slate-400">Bid adds</span><span class="text-emerald-400 font-mono" id="d-bid">—</span></div>
+      <div class="flex justify-between text-sm"><span class="text-slate-400">Ask adds</span><span class="text-red-400 font-mono" id="d-ask">—</span></div>
+      <div class="flex justify-between text-sm"><span class="text-slate-400">Removals</span><span class="text-slate-300 font-mono" id="d-rem">—</span></div>
+    </div>
   </div>
-  <div class="overflow-y-auto" style="max-height:320px">
-    <table class="w-full text-sm">
-      <thead class="sticky top-0 bg-card">
-        <tr class="text-slate-400 text-xs tracking-widest uppercase border-b border-border">
-          <th class="text-left px-5 py-3">Time</th>
-          <th class="text-left px-5 py-3">Outcome</th>
-          <th class="text-left px-5 py-3">Side</th>
-          <th class="text-right px-5 py-3">Price</th>
-          <th class="text-right px-5 py-3">Size (USDC)</th>
-        </tr>
-      </thead>
-      <tbody id="trades-tbody"></tbody>
-    </table>
+
+  <div class="card col-span-3 overflow-hidden">
+    <div class="px-5 py-3 border-b border-slate-700 flex items-center gap-3">
+      <span class="text-white font-semibold text-sm">Trade History</span>
+      <span class="text-slate-500 text-xs" id="trade-count"></span>
+    </div>
+    <div class="overflow-y-auto" style="max-height:240px">
+      <table class="w-full text-sm">
+        <thead class="sticky top-0 bg-card border-b border-slate-700">
+          <tr class="text-slate-400 text-xs tracking-widest uppercase">
+            <th class="text-left px-5 py-2">Time</th>
+            <th class="text-left px-5 py-2">Outcome</th>
+            <th class="text-left px-5 py-2">Side</th>
+            <th class="text-right px-5 py-2">Price</th>
+            <th class="text-right px-5 py-2">Size (USDC)</th>
+          </tr>
+        </thead>
+        <tbody id="trades-tbody"></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
 <script>
 const MID = {{ market.id }};
-const CHART_DEFAULTS = {
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: false,
-  plugins: { legend: { display: false } },
-};
 const GRID = { color: 'rgba(51,65,85,0.6)' };
 
-// ── Fetch all data ────────────────────────────────────────────────────────────
+// ── Utilities ──────────────────────────────────────────────────────────────
+function setText(id, v) { const e = document.getElementById(id); if (e) e.textContent = v; }
+
+function openFullscreen(cardId) {
+  const el = document.getElementById(cardId);
+  if (!document.fullscreenElement) el.requestFullscreen().catch(() => {});
+  else document.exitFullscreen();
+}
+
+document.addEventListener('fullscreenchange', () => {
+  // Resize all charts on fullscreen toggle
+  Object.values(Chart.instances).forEach(c => c.resize());
+});
+
+// ── Data load ──────────────────────────────────────────────────────────────
+let _priceChart = null;
+
 async function loadAll() {
   const [snaps, trades, volume, depth, deltas] = await Promise.all([
     fetch(`/api/markets/${MID}/snapshots`).then(r => r.json()),
@@ -137,135 +143,181 @@ async function loadAll() {
   ]);
   fillStats(snaps, trades);
   renderPriceChart(snaps, trades);
-  renderVolumeChart(volume, trades);
+  renderVolumeChart(volume);
   renderDepthChart(depth);
   fillDeltas(deltas);
   fillTradesTable(trades);
 }
 
-// ── Key stats ─────────────────────────────────────────────────────────────────
+// ── Stats ──────────────────────────────────────────────────────────────────
 function fillStats(snaps, trades) {
   if (snaps.length) {
-    const last = snaps[snaps.length - 1];
-    setText('s-price',  last.price  ? last.price.toFixed(4)  : '—');
-    setText('s-bid',    last.best_bid  ? last.best_bid.toFixed(4)  : '—');
-    setText('s-ask',    last.best_ask  ? last.best_ask.toFixed(4)  : '—');
-    setText('s-spread', last.spread ? last.spread.toFixed(4) : '—');
+    const l = snaps[snaps.length - 1];
+    setText('s-price',  l.price    != null ? l.price.toFixed(4)    : '—');
+    setText('s-bid',    l.best_bid != null ? l.best_bid.toFixed(4)  : '—');
+    setText('s-ask',    l.best_ask != null ? l.best_ask.toFixed(4)  : '—');
+    setText('s-spread', l.spread   != null ? l.spread.toFixed(4)   : '—');
   }
-  const vol = trades.reduce((s, t) => s + (t.size || 0), 0);
-  setText('s-vol', '$' + vol.toFixed(0));
+  setText('s-vol', '$' + trades.reduce((s, t) => s + (t.size || 0), 0).toFixed(0));
 }
 
-// ── Price + Trades chart ───────────────────────────────────────────────────────
+// ── Price chart ────────────────────────────────────────────────────────────
 function renderPriceChart(snaps, trades) {
   if (!snaps.length) return;
+
   const priceData = snaps.map(s => ({ x: s.ts, y: s.price }));
   const bidData   = snaps.map(s => ({ x: s.ts, y: s.best_bid }));
   const askData   = snaps.map(s => ({ x: s.ts, y: s.best_ask }));
   const buys  = trades.filter(t => t.side === 'BUY').map(t => ({
-    x: t.ts, y: t.price, r: Math.min(3 + Math.sqrt(t.size || 0) * 0.4, 12)
+    x: t.ts, y: t.price, r: Math.min(3 + Math.sqrt(t.size || 0) * 0.4, 14)
   }));
   const sells = trades.filter(t => t.side === 'SELL').map(t => ({
-    x: t.ts, y: t.price, r: Math.min(3 + Math.sqrt(t.size || 0) * 0.4, 12)
+    x: t.ts, y: t.price, r: Math.min(3 + Math.sqrt(t.size || 0) * 0.4, 14)
   }));
 
-  new Chart(document.getElementById('priceChart'), {
+  _priceChart = new Chart(document.getElementById('priceChart'), {
     data: {
       datasets: [
-        { type:'line',   label:'Mid',  data:priceData, borderColor:'#3b82f6',
-          borderWidth:2, pointRadius:0, tension:0.1 },
-        { type:'line',   label:'Bid',  data:bidData,   borderColor:'#10b981',
-          borderWidth:1, pointRadius:0, borderDash:[4,3], tension:0.1 },
-        { type:'line',   label:'Ask',  data:askData,   borderColor:'#ef4444',
-          borderWidth:1, pointRadius:0, borderDash:[4,3], tension:0.1 },
-        { type:'bubble', label:'Buy',  data:buys,  backgroundColor:'rgba(16,185,129,0.7)' },
-        { type:'bubble', label:'Sell', data:sells, backgroundColor:'rgba(239,68,68,0.7)' },
+        { type:'line',   label:'Mid Price', data:priceData,
+          borderColor:'#3b82f6', borderWidth:2, pointRadius:0, tension:0.1, order:3 },
+        { type:'line',   label:'Best Bid',  data:bidData,
+          borderColor:'#10b981', borderWidth:1, pointRadius:0, borderDash:[4,3], tension:0.1, order:3 },
+        { type:'line',   label:'Best Ask',  data:askData,
+          borderColor:'#ef4444', borderWidth:1, pointRadius:0, borderDash:[4,3], tension:0.1, order:3 },
+        { type:'bubble', label:'Buy',  data:buys,
+          backgroundColor:'rgba(16,185,129,0.75)', order:1 },
+        { type:'bubble', label:'Sell', data:sells,
+          backgroundColor:'rgba(239,68,68,0.75)', order:1 },
       ]
     },
     options: {
-      ...CHART_DEFAULTS,
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: {
+        legend: {
+          display: true, position: 'top',
+          labels: { color:'#94a3b8', usePointStyle:true, pointStyleWidth:10, padding:16, font:{size:11} },
+        },
+        tooltip: {
+          mode:'index', intersect:false,
+          callbacks: { label: ctx => `${ctx.dataset.label}: ${(ctx.parsed.y||0).toFixed(4)}` }
+        },
+        zoom: {
+          zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x' },
+          pan:  { enabled:true, mode:'x' },
+        },
+      },
       scales: {
         x: { type:'time', time:{ unit:'second', displayFormats:{ second:'HH:mm:ss' } },
              grid:GRID, ticks:{ color:'#64748b', maxTicksLimit:8 } },
-        y: { min:0, max:1, grid:GRID, ticks:{ color:'#64748b',
-             callback: v => v.toFixed(2) } },
-      },
-      plugins: { ...CHART_DEFAULTS.plugins,
-        tooltip: { mode:'index', intersect:false,
-          callbacks: { label: ctx => `${ctx.dataset.label}: ${(ctx.parsed.y||0).toFixed(4)}` }
-        }
+        y: { min:0, max:1, grid:GRID,
+             ticks:{ color:'#64748b', callback: v => v.toFixed(2) } },
       }
     }
   });
 }
 
-// ── Volume chart ──────────────────────────────────────────────────────────────
-function renderVolumeChart(volume, trades) {
-  if (!volume.length && !trades.length) return;
-  // Group buckets by time, split Up vs Down
+function resetZoom() { _priceChart?.resetZoom(); }
+
+// ── Volume chart ───────────────────────────────────────────────────────────
+function renderVolumeChart(volume) {
+  if (!volume.length) return;
   const map = {};
   volume.forEach(v => {
-    if (!map[v.bucket]) map[v.bucket] = { up: 0, down: 0 };
-    if (v.outcome && v.outcome.toLowerCase().includes('up'))   map[v.bucket].up   += v.volume;
-    else                                                        map[v.bucket].down += v.volume;
+    if (!map[v.bucket]) map[v.bucket] = { up:0, down:0 };
+    if (v.outcome?.toLowerCase().includes('up')) map[v.bucket].up   += v.volume;
+    else                                          map[v.bucket].down += v.volume;
   });
-  const labels  = Object.keys(map).sort();
-  const upVols  = labels.map(l => map[l].up);
-  const dnVols  = labels.map(l => map[l].down);
-
+  const labels = Object.keys(map).sort();
   new Chart(document.getElementById('volumeChart'), {
-    type: 'bar',
-    data: {
-      labels,
+    type:'bar',
+    data: { labels,
       datasets: [
-        { label:'Up',   data:upVols, backgroundColor:'rgba(16,185,129,0.75)', stack:'v' },
-        { label:'Down', data:dnVols, backgroundColor:'rgba(239,68,68,0.75)',  stack:'v' },
+        { label:'Up',   data:labels.map(l=>map[l].up),   backgroundColor:'rgba(16,185,129,0.75)', stack:'v' },
+        { label:'Down', data:labels.map(l=>map[l].down), backgroundColor:'rgba(239,68,68,0.75)',  stack:'v' },
       ]
     },
     options: {
-      ...CHART_DEFAULTS,
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins: {
+        legend: { display:true, labels:{ color:'#94a3b8', usePointStyle:true, font:{size:10} } }
+      },
       scales: {
-        x: { stacked:true, grid:GRID, ticks:{ color:'#64748b', maxTicksLimit:6,
-             callback: (_, i) => labels[i] ? labels[i].slice(11,16) : '' } },
-        y: { stacked:true, grid:GRID, ticks:{ color:'#64748b',
-             callback: v => '$'+v.toFixed(0) } },
+        x: { stacked:true, grid:GRID,
+             ticks:{ color:'#64748b', maxTicksLimit:6,
+                     callback:(_,i) => labels[i] ? labels[i].slice(11,16) : '' } },
+        y: { stacked:true, grid:GRID,
+             ticks:{ color:'#64748b', callback: v => '$'+v.toFixed(0) } },
       }
     }
   });
 }
 
-// ── Depth chart ───────────────────────────────────────────────────────────────
+// ── Order book depth chart ─────────────────────────────────────────────────
 function renderDepthChart(depth) {
-  if (!depth || (!depth.bids?.length && !depth.asks?.length)) return;
-  const bids = [...(depth.bids||[])].sort((a,b) => parseFloat(b.price)-parseFloat(a.price));
-  const asks = [...(depth.asks||[])].sort((a,b) => parseFloat(a.price)-parseFloat(b.price));
-  let cumBid = 0, cumAsk = 0;
-  const bidPts = bids.map(b => { cumBid += parseFloat(b.size); return {x: parseFloat(b.price), y: cumBid}; }).reverse();
-  const askPts = asks.map(a => { cumAsk += parseFloat(a.size); return {x: parseFloat(a.price), y: cumAsk}; });
+  if (!depth || (!depth.bids?.length && !depth.asks?.length)) {
+    document.getElementById('depth-card').querySelector('.text-white').textContent
+      = 'Order Book Depth — no snapshot yet';
+    return;
+  }
+
+  // Sort ascending by price
+  const bids = [...(depth.bids||[])].sort((a,b) => parseFloat(a.price) - parseFloat(b.price));
+  const asks = [...(depth.asks||[])].sort((a,b) => parseFloat(a.price) - parseFloat(b.price));
+
+  // Bids: reverse-cumulative (most depth at lowest price)
+  let runBid = bids.reduce((s,b) => s + parseFloat(b.size), 0);
+  const bidPts = bids.map(b => {
+    const pt = { x: parseFloat(b.price), y: runBid };
+    runBid -= parseFloat(b.size);
+    return pt;
+  });
+
+  // Asks: forward-cumulative (most depth at highest price)
+  let runAsk = 0;
+  const askPts = asks.map(a => {
+    runAsk += parseFloat(a.size);
+    return { x: parseFloat(a.price), y: runAsk };
+  });
+
+  // X-axis: centre on midpoint ±0.12
+  const mid = bidPts.length && askPts.length
+    ? (bidPts[bidPts.length-1].x + askPts[0].x) / 2 : 0.5;
+  const xMin = Math.max(0.01, mid - 0.12);
+  const xMax = Math.min(0.99, mid + 0.12);
 
   new Chart(document.getElementById('depthChart'), {
-    type: 'line',
+    type:'line',
     data: {
       datasets: [
-        { label:'Bids', data:bidPts, borderColor:'#10b981', backgroundColor:'rgba(16,185,129,0.15)',
-          fill:true, stepped:'before', pointRadius:0, borderWidth:2 },
-        { label:'Asks', data:askPts, borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.15)',
-          fill:true, stepped:'after',  pointRadius:0, borderWidth:2 },
+        { label:'Bid Depth', data:bidPts,
+          borderColor:'#10b981', backgroundColor:'rgba(16,185,129,0.15)',
+          fill:true, stepped:true, pointRadius:0, borderWidth:2 },
+        { label:'Ask Depth', data:askPts,
+          borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.15)',
+          fill:true, stepped:true, pointRadius:0, borderWidth:2 },
       ]
     },
     options: {
-      ...CHART_DEFAULTS,
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins: {
+        legend: { display:true, labels:{ color:'#94a3b8', usePointStyle:true, font:{size:10} } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: $${(ctx.parsed.y||0).toFixed(0)} @ ${(ctx.parsed.x||0).toFixed(4)}`
+          }
+        }
+      },
       scales: {
-        x: { type:'linear', grid:GRID, ticks:{ color:'#64748b',
-             callback: v => v.toFixed(2) } },
-        y: { beginAtZero:true, grid:GRID, ticks:{ color:'#64748b',
-             callback: v => '$'+v.toFixed(0) } },
+        x: { type:'linear', min:xMin, max:xMax, grid:GRID,
+             ticks:{ color:'#64748b', callback: v => v.toFixed(2) } },
+        y: { beginAtZero:true, grid:GRID,
+             ticks:{ color:'#64748b', callback: v => '$'+v.toFixed(0) } },
       }
     }
   });
 }
 
-// ── Delta stats ───────────────────────────────────────────────────────────────
+// ── Deltas ────────────────────────────────────────────────────────────────
 function fillDeltas(d) {
   setText('d-total', d.total    ?? '—');
   setText('d-bid',   d.bid_adds ?? '—');
@@ -273,30 +325,21 @@ function fillDeltas(d) {
   setText('d-rem',   d.removals ?? '—');
 }
 
-// ── Trades table ──────────────────────────────────────────────────────────────
+// ── Trades table ──────────────────────────────────────────────────────────
 function fillTradesTable(trades) {
   setText('trade-count', `${trades.length} trades`);
   const tbody = document.getElementById('trades-tbody');
-  const sorted = [...trades].reverse();
-  tbody.innerHTML = sorted.map(t => {
-    const isUp   = t.outcome?.toLowerCase().includes('up');
-    const isBuy  = t.side === 'BUY';
-    const outCls = isUp  ? 'text-emerald-400' : 'text-red-400';
-    const sidCls = isBuy ? 'text-emerald-400' : 'text-red-400';
-    const time   = t.ts ? t.ts.slice(11,19) : '—';
+  tbody.innerHTML = [...trades].reverse().map(t => {
+    const isUp  = t.outcome?.toLowerCase().includes('up');
+    const isBuy = t.side === 'BUY';
     return `<tr class="border-b border-slate-700/50 hover:bg-slate-700/20">
-      <td class="px-5 py-2.5 text-slate-400 font-mono text-xs">${time}</td>
-      <td class="px-5 py-2.5 ${outCls} font-bold text-xs">${isUp ? '↑' : '↓'} ${t.outcome||'—'}</td>
-      <td class="px-5 py-2.5 ${sidCls} font-bold text-xs">${t.side||'—'}</td>
-      <td class="px-5 py-2.5 text-right font-mono text-white">${(t.price||0).toFixed(4)}</td>
-      <td class="px-5 py-2.5 text-right font-mono text-slate-300">$${(t.size||0).toFixed(2)}</td>
+      <td class="px-5 py-2 text-slate-400 font-mono text-xs">${(t.ts||'').slice(11,19)}</td>
+      <td class="px-5 py-2 ${isUp?'text-emerald-400':'text-red-400'} font-bold text-xs">${isUp?'↑':'↓'} ${t.outcome||'—'}</td>
+      <td class="px-5 py-2 ${isBuy?'text-emerald-400':'text-red-400'} font-bold text-xs">${t.side||'—'}</td>
+      <td class="px-5 py-2 text-right font-mono text-white">${(t.price||0).toFixed(4)}</td>
+      <td class="px-5 py-2 text-right font-mono text-slate-300">$${(t.size||0).toFixed(2)}</td>
     </tr>`;
   }).join('');
-}
-
-function setText(id, val) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = val;
 }
 
 loadAll();
