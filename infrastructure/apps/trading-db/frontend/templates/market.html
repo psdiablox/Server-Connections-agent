@@ -279,58 +279,56 @@ function resetZoom() {
 // Sync volume chart x-axis to match price chart after zoom/pan
 function syncVolume() {
   if (!_volChart || !_priceChart) return;
-  const { min, max } = _priceChart.scales.x;
-  _volChart.options.scales.x.min = min;
-  _volChart.options.scales.x.max = max;
+  // price chart time scale exposes min/max as ms timestamps
+  _volChart.options.scales.x.min = _priceChart.scales.x.min;
+  _volChart.options.scales.x.max = _priceChart.scales.x.max;
   _volChart.update('none');
 }
 
 // ── Volume chart (synced panel below price) ───────────────────────────────
 function renderVolumeChart(volume, snaps) {
+  if (!volume.length) return;
+
+  // Use numeric ms timestamps so the time scale renders bars correctly
   const map = {};
   volume.forEach(v => {
-    if (!map[v.bucket]) map[v.bucket] = { up:0, down:0 };
-    if (v.outcome?.toLowerCase().includes('up')) map[v.bucket].up   += v.volume;
-    else                                          map[v.bucket].down += v.volume;
+    const ms = new Date(v.bucket).getTime();
+    if (!map[ms]) map[ms] = { up:0, down:0 };
+    if (v.outcome?.toLowerCase().includes('up')) map[ms].up   += v.volume;
+    else                                          map[ms].down += v.volume;
   });
 
-  // Use same time domain as price snapshots so the axes align
-  const xMin = snaps.length ? snaps[0].ts : undefined;
-  const xMax = snaps.length ? snaps[snaps.length-1].ts : undefined;
-
-  // Convert bucket strings to timestamps for time axis
-  const datasets = (() => {
-    const keys = Object.keys(map).sort();
-    return [
-      { label:'Up Vol',   data: keys.map(k => ({ x:k, y:map[k].up   })),
-        backgroundColor:'rgba(16,185,129,0.7)', stack:'v' },
-      { label:'Down Vol', data: keys.map(k => ({ x:k, y:map[k].down })),
-        backgroundColor:'rgba(239,68,68,0.7)',  stack:'v' },
-    ];
-  })();
+  const keys   = Object.keys(map).map(Number).sort();
+  const xMin   = snaps.length ? new Date(snaps[0].ts).getTime() : undefined;
+  const xMax   = snaps.length ? new Date(snaps[snaps.length-1].ts).getTime() : undefined;
 
   _volChart = new Chart(document.getElementById('volumeChart'), {
     type:'bar',
-    data: { datasets },
+    data: {
+      datasets: [
+        { label:'Up',   data: keys.map(k => ({ x:k, y:map[k].up   })),
+          backgroundColor:'rgba(16,185,129,0.75)', stack:'v' },
+        { label:'Down', data: keys.map(k => ({ x:k, y:map[k].down })),
+          backgroundColor:'rgba(239,68,68,0.75)',  stack:'v' },
+      ]
+    },
     options: {
       responsive:true, maintainAspectRatio:false, animation:false,
-      layout: { padding: { top:0 } },
+      layout: { padding:{ top:4 } },
       plugins: {
-        legend: { display:false },   // legend is on price chart, keep this clean
-        tooltip: {
-          callbacks: { label: ctx => `${ctx.dataset.label}: $${(ctx.parsed.y||0).toFixed(0)}` }
-        },
+        legend: { display:false },
+        tooltip: { callbacks:{ label: ctx => `${ctx.dataset.label}: $${(ctx.parsed.y||0).toFixed(0)}` } },
         zoom: {
-          zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x',
-                  onZoom: () => syncVolume() },
-          pan:  { enabled:true, mode:'x', onPan: () => syncVolume() },
+          zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x', onZoom: syncVolume },
+          pan:  { enabled:true, mode:'x', onPan: syncVolume },
         },
       },
       scales: {
         x: {
           type:'time', stacked:true,
+          offset:true,          // critical — centers bars on time scale
           min: xMin, max: xMax,
-          time:{ displayFormats:{ minute:'HH:mm', second:'HH:mm' } },
+          time:{ unit:'minute', displayFormats:{ minute:'h:mm' } },
           grid: GRID,
           ticks: {
             color:'#64748b', maxTicksLimit:6,
@@ -338,14 +336,13 @@ function renderVolumeChart(volume, snaps) {
               const d  = new Date(value);
               const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour:'2-digit', minute:'2-digit' });
               const lo = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
-              return et === lo ? [et + ' ET'] : [et + ' ET', lo + ' local'];
+              return et === lo ? [et+' ET'] : [et+' ET', lo+' local'];
             }
           }
         },
         y: {
-          stacked:true, grid:GRID,
-          ticks:{ color:'#64748b', maxTicksLimit:3,
-                  callback: v => '$'+v.toFixed(0) }
+          stacked:true, beginAtZero:true, grid:GRID,
+          ticks:{ color:'#64748b', maxTicksLimit:3, callback: v => '$'+v.toFixed(0) }
         },
       }
     }
