@@ -110,8 +110,8 @@ async def get_volume_buckets(market_id: int) -> list[dict]:
     rows = await _pool.fetch("""
         SELECT
             date_trunc('minute', ts) +
-                (FLOOR(EXTRACT(epoch FROM ts - date_trunc('minute', ts)) / 30)
-                 * INTERVAL '30 seconds') AS bucket,
+                (FLOOR(EXTRACT(epoch FROM ts - date_trunc('minute', ts)) / 15)
+                 * INTERVAL '15 seconds') AS bucket,
             outcome,
             SUM(size)::float AS volume
         FROM polymarket.trades

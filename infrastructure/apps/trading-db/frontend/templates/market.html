@@ -120,8 +120,28 @@
 </div>
 
 <script>
-const MID = {{ market.id }};
-const GRID = { color: 'rgba(51,65,85,0.6)' };
+const MID          = {{ market.id }};
+const MARKET_START = new Date("{{ market.start_ts }}").getTime();
+const MARKET_END   = new Date("{{ market.end_ts }}").getTime();
+const GRID         = { color: 'rgba(51,65,85,0.6)' };
+
+// Tick step (seconds) based on visible range — always multiples of 15s for clean boundaries
+function tickStep(rangeSec) {
+  if (rangeSec > 240) return 60;
+  if (rangeSec > 120) return 30;
+  if (rangeSec > 45)  return 15;
+  if (rangeSec > 20)  return 10;
+  return 5;
+}
+
+function applyTickStep() {
+  if (!_priceChart) return;
+  const rangeSec = (_priceChart.scales.x.max - _priceChart.scales.x.min) / 1000;
+  const step = tickStep(rangeSec);
+  [_priceChart, _volChart].forEach(c => {
+    if (c) c.options.scales.x.time.stepSize = step;
+  });
+}
 
 // Convert header window to ET (Polymarket) + local
 (function() {
@@ -253,15 +273,17 @@ function renderPriceChart(snaps, trades) {
       scales: {
         x: {
           type:'time',
-          time:{ unit:'second', displayFormats:{ second:'HH:mm:ss' } },
+          min: MARKET_START,
+          max: MARKET_END,
+          time:{ unit:'second', stepSize:30, displayFormats:{ second:'h:mm:ss' } },
           grid: GRID,
           ticks: {
-            color:'#64748b', maxTicksLimit:6,
+            color:'#64748b',
             callback(value) {
               const d  = new Date(value);
               const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour:'2-digit', minute:'2-digit', second:'2-digit' });
               const lo = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
-              return et === lo ? [et + ' ET'] : [et + ' ET', lo + ' local'];
+              return et === lo ? [et+' ET'] : [et+' ET', lo+' local'];
             }
           }
         },
@@ -272,8 +294,13 @@ function renderPriceChart(snaps, trades) {
 }
 
 function resetZoom() {
-  _priceChart?.resetZoom();
-  _volChart?.resetZoom();
+  [_priceChart, _volChart].forEach(c => {
+    if (!c) return;
+    c.options.scales.x.min = MARKET_START;
+    c.options.scales.x.max = MARKET_END;
+    c.options.scales.x.time.stepSize = tickStep((MARKET_END - MARKET_START) / 1000);
+    c.update();
+  });
 }
 
 // Sync volume chart x-axis to match price chart after zoom/pan
@@ -281,15 +308,16 @@ function syncVolume() {
   if (!_volChart || !_priceChart) return;
   _volChart.options.scales.x.min = _priceChart.scales.x.min;
   _volChart.options.scales.x.max = _priceChart.scales.x.max;
-  // Full update (not 'none') so y-axis rescales to fit visible bars
+  applyTickStep();
   _volChart.update();
+  _priceChart.update('none');  // refresh ticks without full redraw
 }
 
 // ── Volume chart (synced panel below price) ───────────────────────────────
 function renderVolumeChart(volume, snaps) {
   if (!snaps.length) return;
 
-  const BUCKET = 30_000; // 30 seconds in ms
+  const BUCKET = 15_000; // 15 seconds in ms
 
   // Map actual trade volume into buckets
   const map = {};
@@ -300,13 +328,11 @@ function renderVolumeChart(volume, snaps) {
     else                                          map[ms].down += v.volume;
   });
 
-  // Generate EVERY 30-second bucket in the market window (fill gaps with 0)
-  // This is critical: evenly-spaced data → Chart.js sizes every bar identically
-  const xMin = new Date(snaps[0].ts).getTime();
-  const xMax = new Date(snaps[snaps.length-1].ts).getTime();
-  const firstBucket = Math.floor(xMin / BUCKET) * BUCKET;
+  // Generate EVERY 15-second bucket for the exact market window (gaps = 0)
+  // Evenly-spaced → each bar is exactly 15s wide, scales correctly on zoom
+  const firstBucket = Math.floor(MARKET_START / BUCKET) * BUCKET;
   const allBuckets  = [];
-  for (let t = firstBucket; t <= xMax; t += BUCKET) allBuckets.push(t);
+  for (let t = firstBucket; t <= MARKET_END; t += BUCKET) allBuckets.push(t);
 
   const upData   = allBuckets.map(k => ({ x:k, y: map[k]?.up   || 0 }));
   const downData = allBuckets.map(k => ({ x:k, y: map[k]?.down || 0 }));
@@ -335,16 +361,17 @@ function renderVolumeChart(volume, snaps) {
       scales: {
         x: {
           type:'time', stacked:true,
-          offset:true,          // critical — centers bars on time scale
-          min: xMin, max: xMax,
-          time:{ unit:'minute', displayFormats:{ minute:'h:mm' } },
+          offset:true,
+          min: MARKET_START,
+          max: MARKET_END,
+          time:{ unit:'second', stepSize:30, displayFormats:{ second:'h:mm:ss' } },
           grid: GRID,
           ticks: {
-            color:'#64748b', maxTicksLimit:6,
+            color:'#64748b',
             callback(value) {
               const d  = new Date(value);
-              const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour:'2-digit', minute:'2-digit' });
-              const lo = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+              const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+              const lo = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
               return et === lo ? [et+' ET'] : [et+' ET', lo+' local'];
             }
           }
