@@ -72,8 +72,8 @@
   </div>
   <!-- Divider -->
   <div style="height:1px;background:#334155;margin:0 -0.25rem"></div>
-  <!-- Volume panel -->
-  <div style="height:130px; position:relative"><canvas id="volumeChart"></canvas></div>
+  <!-- Volume panel (extra height for the bottom pill) -->
+  <div style="height:160px; position:relative"><canvas id="volumeChart"></canvas></div>
 </div>
 
 <!-- Order Book Depth (full width) -->
@@ -343,6 +343,8 @@ function renderPriceChart(snaps, trades) {
     },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
+      // Reserve space below the chartArea for the time pill (drawn at bottom + 2..20)
+      layout: { padding: { bottom: 26 } },
       plugins: {
         legend: {
           display: true, position: 'top',
@@ -428,17 +430,9 @@ function resetZoom() {
   _volChart?.update();
 }
 
-// Recompute bar pixel-width so each bar fills exactly one 15s time slot
-// (kept slightly under 100% so adjacent bars don't visually overlap edges)
-function fitBarThickness() {
-  if (!_volChart) return;
-  const area = _volChart.chartArea;
-  if (!area || !area.width) return;
-  const range = (_volChart.scales.x.max - _volChart.scales.x.min) / 1000;  // seconds
-  if (!range) return;
-  const px = Math.max(1, (15 * area.width) / range * 0.94);  // 94% leaves a hairline gap
-  _volChart.data.datasets.forEach(ds => { ds.barThickness = px; });
-}
+// No explicit barThickness — fights Chart.js's stacked-bar layout and causes
+// the visual overlap. Using barPercentage instead (set on each dataset).
+function fitBarThickness() { /* no-op kept to avoid signature changes */ }
 
 // Sync volume chart x-axis to match price chart after zoom/pan
 function syncVolume() {
@@ -483,18 +477,19 @@ function renderVolumeChart(volume, snaps) {
     data: {
       datasets: [
         { label:'Up',   data: upData,   backgroundColor:'rgba(16,185,129,0.75)',
-          stack:'v', barPercentage:1.0, categoryPercentage:1.0 },
+          stack:'v', barPercentage:0.92, categoryPercentage:1.0 },
         { label:'Down', data: downData, backgroundColor:'rgba(239,68,68,0.75)',
-          stack:'v', barPercentage:1.0, categoryPercentage:1.0 },
+          stack:'v', barPercentage:0.92, categoryPercentage:1.0 },
       ]
     },
     options: {
       responsive:true, maintainAspectRatio:false, animation:false,
-      layout: { padding:{ top:4 } },
+      // Reserve 26px below the chartArea for the volume pill (the crosshair
+      // plugin draws it at chartArea.bottom + 2..20).
+      layout: { padding:{ top:4, bottom:26 } },
       plugins: {
         legend: { display:false },
         tooltip: {
-          // Hovering anywhere over the bar's x-slot shows BOTH stacks at once
           mode: 'index',
           intersect: false,
           callbacks: {
