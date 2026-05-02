@@ -6,8 +6,6 @@ networks:
     internal: true      # postgres cannot reach internet
   internet:
     driver: bridge      # collector can reach internet
-  proxy:
-    external: true      # Traefik routing
 
 volumes:
   postgres_data:
@@ -52,34 +50,6 @@ services:
       - PRICE_POLL_INTERVAL=${PRICE_POLL_INTERVAL:-1.0}
       - DISCOVERY_INTERVAL=${DISCOVERY_INTERVAL:-30.0}
       - CHECKPOINT_INTERVAL=${CHECKPOINT_INTERVAL:-60.0}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: "0.25"
-
-  frontend:
-    build: ./frontend
-    container_name: trading-frontend
-    restart: unless-stopped
-    networks:
-      - db
-      - proxy
-    environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - SECRET_KEY=${SECRET_KEY}
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.trading-frontend.rule=Host(`data.${DOMAIN}`)"
-      - "traefik.http.routers.trading-frontend.entrypoints=websecure"
-      - "traefik.http.routers.trading-frontend.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.trading-frontend.middlewares=admin-ip@file,secure-headers@file,rate-limit@file"
-      - "traefik.http.services.trading-frontend.loadbalancer.server.port=8000"
     depends_on:
       postgres:
         condition: service_healthy
