@@ -292,14 +292,20 @@ async def price_poll_loop(state: CollectorState) -> None:
                     )
                     resp.raise_for_status()
                     data = resp.json()
-                    # API returns {"mid": "0.523"} — log once to confirm format
                     raw_mid = data.get("mid") or data.get("price") or data.get("midpoint")
                     mid = float(raw_mid) if raw_mid else None
                 except Exception as exc:
                     log.debug("midpoint fetch failed for %s…: %s", token_id[:12], exc)
 
-                await db.insert_price_snapshot(
-                    ts, market.db_id, mid, book.best_bid, book.best_ask
-                )
+                # Skip insert entirely if we have nothing meaningful to record
+                if mid is None and book.best_bid is None and book.best_ask is None:
+                    continue
+
+                try:
+                    await db.insert_price_snapshot(
+                        ts, market.db_id, mid, book.best_bid, book.best_ask
+                    )
+                except Exception as exc:
+                    log.warning("snapshot insert failed for market %d: %s", market.db_id, exc)
 
             await asyncio.sleep(config.PRICE_POLL_SEC)

@@ -14,26 +14,29 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+async def resilient(coro_fn, state, name):
+    """Run a task loop, restarting it on crash with a short backoff."""
+    while True:
+        try:
+            await coro_fn(state)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error("task '%s' crashed: %s — restarting in 10s", name, exc, exc_info=True)
+            await asyncio.sleep(10)
+
+
 async def main() -> None:
     await db.init()
     log.info("database pool ready")
 
     state = CollectorState()
 
-    tasks = [
-        asyncio.create_task(discover_loop(state),    name="discover"),
-        asyncio.create_task(ws_loop(state),           name="ws"),
-        asyncio.create_task(price_poll_loop(state),   name="poller"),
-    ]
-
-    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
-
-    for t in done:
-        if exc := t.exception():
-            log.error("task '%s' crashed: %s", t.get_name(), exc, exc_info=exc)
-
-    for t in pending:
-        t.cancel()
+    await asyncio.gather(
+        resilient(discover_loop,    state, "discover"),
+        resilient(ws_loop,          state, "ws"),
+        resilient(price_poll_loop,  state, "poller"),
+    )
 
 
 if __name__ == "__main__":
