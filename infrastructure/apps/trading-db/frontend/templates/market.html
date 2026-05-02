@@ -396,7 +396,13 @@ function renderPriceChart(snaps, trades) {
             }
           }
         },
-        y: { min:0, max:1, grid:GRID, ticks:{ color:'#64748b', callback: v => v.toFixed(2) } },
+        y: {
+          min:0, max:1, grid:GRID,
+          ticks:{ color:'#64748b', callback: v => v.toFixed(2) },
+          // Force fixed-width y-axis so chartArea.left matches the volume
+          // chart — keeps the two crosshair vertical lines pixel-aligned.
+          afterFit: s => { s.width = 70; },
+        },
       }
     }
   });
@@ -560,27 +566,15 @@ function renderVolumeChart(volume, snaps) {
       layout: { padding:{ top:4, bottom:26 } },
       plugins: {
         legend: { display:false },
-        tooltip: {
-          mode: 'index',
-          intersect: false,
-          callbacks: {
-            title: ctx => {
-              const start = new Date(ctx[0].parsed.x);
-              const end   = new Date(ctx[0].parsed.x + 15_000);
-              const fmt = d => d.toLocaleTimeString('en-US', { timeZone:'America/New_York',
-                hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
-              return `${fmt(start)} → ${fmt(end)} ET`;
-            },
-            label: ctx => `${ctx.dataset.label}: $${(ctx.parsed.y||0).toFixed(2)}`,
-          },
-        },
+        // Disabled — the bottom pill already shows the bucket range and
+        // Up/Down/Σ totals, so the default tooltip was overlapping it.
+        tooltip: { enabled: false },
         zoom: {
           limits: ZOOM_LIMITS,
           zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x', onZoom: syncVolume },
           pan:  { enabled:true, mode:'x', onPan: syncVolume },
         },
       },
-      interaction: { mode:'index', intersect:false },
       scales: {
         x: {
           type:'time', stacked:true,
@@ -595,7 +589,8 @@ function renderVolumeChart(volume, snaps) {
         },
         y: {
           stacked:true, beginAtZero:true, grid:GRID,
-          ticks:{ color:'#64748b', maxTicksLimit:3, callback: v => '$'+v.toFixed(0) }
+          ticks:{ color:'#64748b', maxTicksLimit:3, callback: v => '$'+v.toFixed(0) },
+          afterFit: s => { s.width = 70; },   // match price chart for X-alignment
         },
       }
     }
