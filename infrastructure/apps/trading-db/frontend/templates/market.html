@@ -165,29 +165,44 @@ function fillStats(snaps, trades) {
 function renderPriceChart(snaps, trades) {
   if (!snaps.length) return;
 
-  const priceData = snaps.map(s => ({ x: s.ts, y: s.price }));
-  const bidData   = snaps.map(s => ({ x: s.ts, y: s.best_bid }));
-  const askData   = snaps.map(s => ({ x: s.ts, y: s.best_ask }));
-  const buys  = trades.filter(t => t.side === 'BUY').map(t => ({
-    x: t.ts, y: t.price, r: Math.min(3 + Math.sqrt(t.size || 0) * 0.4, 14)
-  }));
-  const sells = trades.filter(t => t.side === 'SELL').map(t => ({
-    x: t.ts, y: t.price, r: Math.min(3 + Math.sqrt(t.size || 0) * 0.4, 14)
-  }));
+  // Lines
+  const upData   = snaps.map(s => ({ x: s.ts, y: s.price }));
+  const downData = snaps.map(s => ({ x: s.ts, y: s.price != null ? parseFloat((1 - s.price).toFixed(4)) : null }));
+  const midData  = snaps.map(s => ({ x: s.ts, y: 0.5 }));
+
+  // Bubble radius proportional to trade size
+  const r = t => Math.min(3 + Math.sqrt(t.size || 0) * 0.4, 14);
+
+  // UP outcome bubbles (plotted at Up token trade price)
+  const upBuys  = trades.filter(t => t.outcome?.toLowerCase().includes('up') && t.side === 'BUY')
+                        .map(t => ({ x: t.ts, y: t.price, r: r(t) }));
+  const upSells = trades.filter(t => t.outcome?.toLowerCase().includes('up') && t.side === 'SELL')
+                        .map(t => ({ x: t.ts, y: t.price, r: r(t) }));
+
+  // DOWN outcome bubbles (plotted at Down token trade price — naturally near 1-upPrice)
+  const dnBuys  = trades.filter(t => !t.outcome?.toLowerCase().includes('up') && t.side === 'BUY')
+                        .map(t => ({ x: t.ts, y: t.price, r: r(t) }));
+  const dnSells = trades.filter(t => !t.outcome?.toLowerCase().includes('up') && t.side === 'SELL')
+                        .map(t => ({ x: t.ts, y: t.price, r: r(t) }));
 
   _priceChart = new Chart(document.getElementById('priceChart'), {
     data: {
       datasets: [
-        { type:'line',   label:'Mid Price', data:priceData,
-          borderColor:'#3b82f6', borderWidth:2, pointRadius:0, tension:0.1, order:3 },
-        { type:'line',   label:'Best Bid',  data:bidData,
-          borderColor:'#10b981', borderWidth:1, pointRadius:0, borderDash:[4,3], tension:0.1, order:3 },
-        { type:'line',   label:'Best Ask',  data:askData,
-          borderColor:'#ef4444', borderWidth:1, pointRadius:0, borderDash:[4,3], tension:0.1, order:3 },
-        { type:'bubble', label:'Buy',  data:buys,
-          backgroundColor:'rgba(16,185,129,0.75)', order:1 },
-        { type:'bubble', label:'Sell', data:sells,
-          backgroundColor:'rgba(239,68,68,0.75)', order:1 },
+        { type:'line',   label:'↑ Up',        data:upData,
+          borderColor:'#10b981', borderWidth:2.5, pointRadius:0, tension:0.1, order:3 },
+        { type:'line',   label:'↓ Down',       data:downData,
+          borderColor:'#ef4444', borderWidth:2.5, pointRadius:0, tension:0.1, order:3 },
+        { type:'line',   label:'Mid (0.5)',     data:midData,
+          borderColor:'rgba(100,116,139,0.45)', borderWidth:1, borderDash:[6,3],
+          pointRadius:0, order:4 },
+        { type:'bubble', label:'Up · Buy',     data:upBuys,
+          backgroundColor:'rgba(16,185,129,0.85)', order:1 },
+        { type:'bubble', label:'Up · Sell',    data:upSells,
+          backgroundColor:'rgba(16,185,129,0.35)', borderColor:'#10b981', borderWidth:1.5, order:1 },
+        { type:'bubble', label:'Down · Buy',   data:dnBuys,
+          backgroundColor:'rgba(239,68,68,0.85)', order:1 },
+        { type:'bubble', label:'Down · Sell',  data:dnSells,
+          backgroundColor:'rgba(239,68,68,0.35)', borderColor:'#ef4444', borderWidth:1.5, order:1 },
       ]
     },
     options: {
@@ -195,7 +210,7 @@ function renderPriceChart(snaps, trades) {
       plugins: {
         legend: {
           display: true, position: 'top',
-          labels: { color:'#94a3b8', usePointStyle:true, pointStyleWidth:10, padding:16, font:{size:11} },
+          labels: { color:'#94a3b8', usePointStyle:true, pointStyleWidth:10, padding:14, font:{size:11} },
         },
         tooltip: {
           mode:'index', intersect:false,
@@ -207,10 +222,21 @@ function renderPriceChart(snaps, trades) {
         },
       },
       scales: {
-        x: { type:'time', time:{ unit:'second', displayFormats:{ second:'HH:mm:ss' } },
-             grid:GRID, ticks:{ color:'#64748b', maxTicksLimit:8 } },
-        y: { min:0, max:1, grid:GRID,
-             ticks:{ color:'#64748b', callback: v => v.toFixed(2) } },
+        x: {
+          type:'time',
+          time:{ unit:'second', displayFormats:{ second:'HH:mm:ss' } },
+          grid: GRID,
+          ticks: {
+            color:'#64748b', maxTicksLimit:6,
+            callback(value) {
+              const d = new Date(value);
+              const utc   = d.toISOString().slice(11,19) + ' UTC';
+              const local = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+              return [utc, local];   // Chart.js renders array as two stacked lines
+            }
+          }
+        },
+        y: { min:0, max:1, grid:GRID, ticks:{ color:'#64748b', callback: v => v.toFixed(2) } },
       }
     }
   });
