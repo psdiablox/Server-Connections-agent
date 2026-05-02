@@ -124,8 +124,10 @@ const MID          = {{ market.id }};
 const MARKET_START = new Date("{{ market.start_ts }}").getTime();
 const MARKET_END   = new Date("{{ market.end_ts }}").getTime();
 const GRID         = { color: 'rgba(51,65,85,0.6)' };
+const ZOOM_LIMITS  = { x: { min: MARKET_START, max: MARKET_END, minRange: 15_000 } };
 
-// Tick step (seconds) based on visible range — always multiples of 15s for clean boundaries
+// ── Tick helpers ───────────────────────────────────────────────────────────
+// Clean step sizes: always multiples of 15s so ticks land on :00 :15 :30 :45
 function tickStep(rangeSec) {
   if (rangeSec > 240) return 60;
   if (rangeSec > 120) return 30;
@@ -133,6 +135,75 @@ function tickStep(rangeSec) {
   if (rangeSec > 20)  return 10;
   return 5;
 }
+
+// afterBuildTicks: keep only ticks that land on clean :00/:15/:30/:45 boundaries
+// (i.e. value divisible by 15 000 ms from Unix epoch), then thin if too many.
+function cleanTicks(scale) {
+  const stepMs = tickStep(
+    (scale.max - scale.min) / 1000
+  ) * 1000;
+  scale.ticks = scale.ticks.filter(t => t.value % stepMs === 0);
+  while (scale.ticks.length > 8) {
+    scale.ticks = scale.ticks.filter((_, i) => i % 2 === 0);
+  }
+}
+
+// ── Crosshair plugin ───────────────────────────────────────────────────────
+let _mouseOnPrice = false, _cursorY = null;
+
+const crosshairPlugin = {
+  id: 'crosshair',
+  afterDraw(chart) {
+    if (!_mouseOnPrice || _cursorY === null) return;
+    const { ctx, chartArea: { top, bottom, left, right }, scales, tooltip } = chart;
+
+    // Snap vertical line to nearest data point x
+    const snapX = tooltip._active?.length
+      ? tooltip._active[0].element.x : null;
+    if (!snapX) return;
+
+    const inChart = _cursorY >= top && _cursorY <= bottom;
+    if (!inChart) return;
+
+    const yVal = scales.y.getValueForPixel(_cursorY);
+    const xVal = scales.x.getValueForPixel(snapX);
+
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = 'rgba(148,163,184,0.4)';
+    ctx.lineWidth = 1;
+    // Vertical
+    ctx.beginPath(); ctx.moveTo(snapX, top); ctx.lineTo(snapX, bottom); ctx.stroke();
+    // Horizontal
+    ctx.beginPath(); ctx.moveTo(left, _cursorY); ctx.lineTo(right, _cursorY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Y-axis pill
+    if (yVal != null) {
+      const label = yVal.toFixed(3);
+      const tw = ctx.measureText(label).width + 10;
+      ctx.fillStyle = '#1e3a5f'; ctx.fillRect(left - tw - 2, _cursorY - 9, tw, 18);
+      ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(left - tw - 2, _cursorY - 9, tw, 18);
+      ctx.fillStyle = '#93c5fd'; ctx.font = '11px monospace'; ctx.textAlign = 'right';
+      ctx.fillText(label, left - 4, _cursorY + 4);
+    }
+
+    // X-axis pill (ET time)
+    if (xVal != null) {
+      const d = new Date(xVal);
+      const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York',
+        hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+      const tw = ctx.measureText(et).width + 10;
+      ctx.fillStyle = '#1e3a5f'; ctx.fillRect(snapX - tw/2, bottom + 2, tw, 18);
+      ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(snapX - tw/2, bottom + 2, tw, 18);
+      ctx.fillStyle = '#93c5fd'; ctx.textAlign = 'center';
+      ctx.fillText(et, snapX, bottom + 14);
+    }
+
+    ctx.restore();
+  }
+};
+Chart.register(crosshairPlugin);
 
 function applyTickStep() {
   if (!_priceChart) return;
@@ -265,24 +336,28 @@ function renderPriceChart(snaps, trades) {
           callbacks: { label: ctx => `${ctx.dataset.label}: ${(ctx.parsed.y||0).toFixed(4)}` }
         },
         zoom: {
-          zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x',
-                  onZoom: syncVolume },
+          limits: ZOOM_LIMITS,        // hard-block panning outside market window
+          zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x', onZoom: syncVolume },
           pan:  { enabled:true, mode:'x', onPan: syncVolume },
         },
       },
+      interaction: { mode:'index', intersect:false },
       scales: {
         x: {
           type:'time',
           min: MARKET_START,
           max: MARKET_END,
+          bounds: 'ticks',
           time:{ unit:'second', stepSize:30, displayFormats:{ second:'h:mm:ss' } },
           grid: GRID,
+          afterBuildTicks: cleanTicks,
           ticks: {
             color:'#64748b',
+            autoSkip: false,
             callback(value) {
               const d  = new Date(value);
-              const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour:'2-digit', minute:'2-digit', second:'2-digit' });
-              const lo = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+              const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+              const lo = d.toLocaleTimeString([], { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
               return et === lo ? [et+' ET'] : [et+' ET', lo+' local'];
             }
           }
@@ -290,6 +365,18 @@ function renderPriceChart(snaps, trades) {
         y: { min:0, max:1, grid:GRID, ticks:{ color:'#64748b', callback: v => v.toFixed(2) } },
       }
     }
+  });
+
+  // Wire up crosshair mouse tracking
+  const canvas = document.getElementById('priceChart');
+  canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    _cursorY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    _mouseOnPrice = true;
+    _priceChart.draw();
+  });
+  canvas.addEventListener('mouseleave', () => {
+    _mouseOnPrice = false; _cursorY = null; _priceChart.draw();
   });
 }
 
@@ -354,6 +441,7 @@ function renderVolumeChart(volume, snaps) {
         legend: { display:false },
         tooltip: { callbacks:{ label: ctx => `${ctx.dataset.label}: $${(ctx.parsed.y||0).toFixed(0)}` } },
         zoom: {
+          limits: ZOOM_LIMITS,
           zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x', onZoom: syncVolume },
           pan:  { enabled:true, mode:'x', onPan: syncVolume },
         },
@@ -366,12 +454,14 @@ function renderVolumeChart(volume, snaps) {
           max: MARKET_END,
           time:{ unit:'second', stepSize:30, displayFormats:{ second:'h:mm:ss' } },
           grid: GRID,
+          afterBuildTicks: cleanTicks,
           ticks: {
             color:'#64748b',
+            autoSkip: false,
             callback(value) {
               const d  = new Date(value);
-              const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour:'2-digit', minute:'2-digit', second:'2-digit' });
-              const lo = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+              const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+              const lo = d.toLocaleTimeString([], { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
               return et === lo ? [et+' ET'] : [et+' ET', lo+' local'];
             }
           }
