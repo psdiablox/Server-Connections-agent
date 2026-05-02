@@ -104,3 +104,26 @@ async def api_depth(market_id: int, _=Depends(auth.require_auth)):
 @app.get("/api/markets/{market_id}/deltas")
 async def api_deltas(market_id: int, _=Depends(auth.require_auth)):
     return await queries.get_delta_summary(market_id)
+
+
+# ── Health endpoint (NO auth — Uptime Kuma polls this every minute) ────────
+# 200 → collector is recording fresh data.
+# 503 → snapshots stale OR trades stale (likely zombie WebSocket / dead poller).
+@app.get("/health/collector")
+async def collector_health():
+    SNAP_MAX_AGE  = 30   # snapshots run every 1s, so 30s is generous
+    TRADE_MAX_AGE = 300  # active BTC 5-min markets always fill within 5 min
+
+    age = await queries.health_age()
+    snap, trade = age["snap_age_sec"], age["trade_age_sec"]
+
+    problems = []
+    if snap  is None or snap  > SNAP_MAX_AGE:
+        problems.append(f"snapshots stale ({snap}s)")
+    if trade is None or trade > TRADE_MAX_AGE:
+        problems.append(f"trades stale ({trade}s)")
+
+    body = {"snap_age_sec": snap, "trade_age_sec": trade, "problems": problems}
+    if problems:
+        return JSONResponse(status_code=503, content={"status": "stale", **body})
+    return {"status": "ok", **body}

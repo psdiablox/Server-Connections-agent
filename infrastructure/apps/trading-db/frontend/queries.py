@@ -135,6 +135,21 @@ async def get_book_depth(market_id: int, token_id: str) -> Optional[dict]:
     return {"bids": row["bids"], "asks": row["asks"]}
 
 
+async def health_age() -> dict:
+    """Return seconds-since-last for snapshots and trades. Used by /health."""
+    row = await _pool.fetchrow("""
+        SELECT
+          EXTRACT(EPOCH FROM (NOW() - MAX(ps.ts)))::int AS snap_age,
+          EXTRACT(EPOCH FROM (NOW() - MAX(t.ts)))::int  AS trade_age
+        FROM polymarket.price_snapshots ps
+        FULL JOIN polymarket.trades t ON FALSE
+    """)
+    return {
+        "snap_age_sec":  row["snap_age"]  if row and row["snap_age"]  is not None else None,
+        "trade_age_sec": row["trade_age"] if row and row["trade_age"] is not None else None,
+    }
+
+
 async def get_delta_summary(market_id: int) -> dict:
     row = await _pool.fetchrow("""
         SELECT
