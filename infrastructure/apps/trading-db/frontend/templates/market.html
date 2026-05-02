@@ -307,9 +307,9 @@ function renderVolumeChart(volume, snaps) {
     data: {
       datasets: [
         { label:'Up',   data: keys.map(k => ({ x:k, y:map[k].up   })),
-          backgroundColor:'rgba(16,185,129,0.75)', stack:'v' },
+          backgroundColor:'rgba(16,185,129,0.75)', stack:'v', maxBarThickness:24 },
         { label:'Down', data: keys.map(k => ({ x:k, y:map[k].down })),
-          backgroundColor:'rgba(239,68,68,0.75)',  stack:'v' },
+          backgroundColor:'rgba(239,68,68,0.75)',  stack:'v', maxBarThickness:24 },
       ]
     },
     options: {
