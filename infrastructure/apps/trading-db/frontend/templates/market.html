@@ -403,11 +403,6 @@ function renderPriceChart(snaps, trades) {
           backgroundColor:'rgba(239,68,68,0.85)', order:1 },
         { type:'bubble', label:'Down · Sell', data:dnSells, yAxisID:'yPrice',
           backgroundColor:'rgba(239,68,68,0.35)', borderColor:'#ef4444', borderWidth:1.5, order:1 },
-        // Volume on the same canvas, lower y-axis. Bars drawn by volumeBarsPlugin
-        // — these line entries exist purely to drive the yVolume scale range.
-        { type:'line', label:'_volTrigger', yAxisID:'yVolume',
-          data:[{x: MARKET_START, y: 0}, {x: MARKET_END, y: volMax}],
-          borderColor:'rgba(0,0,0,0)', pointRadius:0, showLine:false, hidden:true },
       ]
     },
     options: {
@@ -441,6 +436,28 @@ function renderPriceChart(snaps, trades) {
       },
       interaction: { mode:'point', intersect:true },
       scales: {
+        // Stacked y-axes — order = top-to-bottom, so yPrice first puts it on top.
+        yPrice: {
+          type:'linear', position:'left',
+          stack:'main', stackWeight: 3,
+          min:0, max:1, grid:GRID,
+          ticks:{ color:'#64748b', callback: v => v.toFixed(2) },
+        },
+        yVolume: {
+          type:'linear', position:'left',
+          stack:'main', stackWeight: 1,
+          beginAtZero: true,
+          // Explicit max so axis scales correctly even though bars are
+          // drawn by a custom plugin (Chart.js can't auto-fit invisible bars).
+          suggestedMax: volMax * 1.1,
+          grid:GRID,
+          ticks: {
+            color:'#64748b', maxTicksLimit:3,
+            callback: v => v >= 1000 ? '$'+(v/1000).toFixed(0)+'k'
+                       : v >= 1     ? '$'+v.toFixed(0)
+                       : '$0',
+          },
+        },
         x: {
           type:'time',
           min: MARKET_START,
@@ -458,25 +475,6 @@ function renderPriceChart(snaps, trades) {
               return et === lo ? [et+' ET'] : [et+' ET', lo+' local'];
             }
           }
-        },
-        // Stacked y-axes: price on top (3/4 of height), volume below (1/4)
-        yPrice: {
-          type:'linear', position:'left',
-          stack:'main', stackWeight: 3,
-          min:0, max:1, grid:GRID,
-          ticks:{ color:'#64748b', callback: v => v.toFixed(2) },
-        },
-        yVolume: {
-          type:'linear', position:'left',
-          stack:'main', stackWeight: 1,
-          beginAtZero: true,
-          grid:GRID,
-          ticks: {
-            color:'#64748b', maxTicksLimit:3,
-            callback: v => v >= 1000 ? '$'+(v/1000).toFixed(0)+'k'
-                       : v >= 1     ? '$'+v.toFixed(0)
-                       : '$0',
-          },
         },
       }
     }
