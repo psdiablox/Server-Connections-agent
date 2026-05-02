@@ -152,6 +152,7 @@ function cleanTicks(scale) {
 // Shared x-axis state in TIME-domain (ms) so both charts can render the line
 let _mouseOnPrice = false, _cursorX = null, _cursorY = null;
 let _crosshairTime = null;   // ms timestamp the user is hovering at
+let _volBucketLookup = null; // Map<bucketStartMs, {up, down}> for the bottom pill
 
 const crosshairPlugin = {
   id: 'crosshair',
@@ -191,8 +192,8 @@ const crosshairPlugin = {
       }
     }
 
-    // X-axis pill — only on the volume chart so it appears under both panels once
-    if (isVolume) {
+    // Time pill — shown under the PRICE panel
+    if (isPrice) {
       const d = new Date(_crosshairTime);
       const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York',
         hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
@@ -201,6 +202,20 @@ const crosshairPlugin = {
       ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(xPixel - tw/2, bottom + 2, tw, 18);
       ctx.fillStyle = '#93c5fd'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(et, xPixel, bottom + 11);
+    }
+
+    // Volume pill — shown under the VOLUME panel, with the bucket totals
+    if (isVolume && _volBucketLookup) {
+      // Snap to the bucket containing _crosshairTime
+      const bucketStart = Math.floor(_crosshairTime / 15_000) * 15_000;
+      const v = _volBucketLookup.get(bucketStart) || { up: 0, down: 0 };
+      const total = v.up + v.down;
+      const label = `Up $${v.up.toFixed(0)} · Down $${v.down.toFixed(0)} · Σ $${total.toFixed(0)}`;
+      const tw = ctx.measureText(label).width + 14;
+      ctx.fillStyle = '#1e3a5f'; ctx.fillRect(xPixel - tw/2, bottom + 2, tw, 18);
+      ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(xPixel - tw/2, bottom + 2, tw, 18);
+      ctx.fillStyle = '#93c5fd'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(label, xPixel, bottom + 11);
     }
 
   }
@@ -414,13 +429,14 @@ function resetZoom() {
 }
 
 // Recompute bar pixel-width so each bar fills exactly one 15s time slot
+// (kept slightly under 100% so adjacent bars don't visually overlap edges)
 function fitBarThickness() {
   if (!_volChart) return;
   const area = _volChart.chartArea;
   if (!area || !area.width) return;
   const range = (_volChart.scales.x.max - _volChart.scales.x.min) / 1000;  // seconds
   if (!range) return;
-  const px = Math.max(1, (15 * area.width) / range);  // pixels per 15-second bucket
+  const px = Math.max(1, (15 * area.width) / range * 0.94);  // 94% leaves a hairline gap
   _volChart.data.datasets.forEach(ds => { ds.barThickness = px; });
 }
 
@@ -449,6 +465,9 @@ function renderVolumeChart(volume, snaps) {
     if (v.outcome?.toLowerCase().includes('up')) map[ms].up   += v.volume;
     else                                          map[ms].down += v.volume;
   });
+
+  // Expose for the crosshair pill
+  _volBucketLookup = new Map(Object.entries(map).map(([k, v]) => [Number(k), v]));
 
   // Generate EVERY 15-second bucket for the exact market window (gaps = 0)
   // Evenly-spaced → each bar is exactly 15s wide, scales correctly on zoom
@@ -503,17 +522,10 @@ function renderVolumeChart(volume, snaps) {
           max: MARKET_END,
           time:{ unit:'second', stepSize:30, displayFormats:{ second:'h:mm:ss' } },
           grid: GRID,
-          afterBuildTicks: cleanTicks,
-          ticks: {
-            color:'#64748b',
-            autoSkip: false,
-            callback(value) {
-              const d  = new Date(value);
-              const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
-              const lo = d.toLocaleTimeString([], { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
-              return et === lo ? [et+' ET'] : [et+' ET', lo+' local'];
-            }
-          }
+          // No tick labels at the bottom of the volume panel — time is already
+          // shown under the price panel; this row is reserved for the
+          // volume-at-cursor pill drawn by the crosshair plugin.
+          ticks: { display: false },
         },
         y: {
           stacked:true, beginAtZero:true, grid:GRID,
