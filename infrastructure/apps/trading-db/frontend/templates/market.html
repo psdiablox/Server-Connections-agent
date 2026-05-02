@@ -436,7 +436,9 @@ function renderPriceChart(snaps, trades) {
       },
       interaction: { mode:'point', intersect:true },
       scales: {
-        // Stacked y-axes — order = top-to-bottom, so yPrice first puts it on top.
+        // Stacked y-axes. Chart.js lays them out in declaration order
+        // top→bottom, so yPrice first = price panel on top, yVolume
+        // second = volume bars below it.
         yPrice: {
           type:'linear', position:'left',
           stack:'main', stackWeight: 3,
@@ -447,8 +449,8 @@ function renderPriceChart(snaps, trades) {
           type:'linear', position:'left',
           stack:'main', stackWeight: 1,
           beginAtZero: true,
-          // Explicit max so axis scales correctly even though bars are
-          // drawn by a custom plugin (Chart.js can't auto-fit invisible bars).
+          // Explicit max so axis scales correctly — bars are drawn by
+          // a custom plugin so Chart.js has nothing to auto-fit.
           suggestedMax: volMax * 1.1,
           grid:GRID,
           ticks: {
