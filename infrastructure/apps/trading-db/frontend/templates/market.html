@@ -204,18 +204,22 @@ const crosshairPlugin = {
       ctx.fillText(et, xPixel, bottom + 11);
     }
 
-    // Volume pill — shown under the VOLUME panel, with the bucket totals
+    // Volume pill — shows bucket time range + Up/Down totals
     if (isVolume && _volBucketLookup) {
-      // Snap to the bucket containing _crosshairTime
       const bucketStart = Math.floor(_crosshairTime / 15_000) * 15_000;
+      const bucketEnd   = bucketStart + 15_000;
       const v = _volBucketLookup.get(bucketStart) || { up: 0, down: 0 };
       const total = v.up + v.down;
-      const label = `Up $${v.up.toFixed(0)} · Down $${v.down.toFixed(0)} · Σ $${total.toFixed(0)}`;
+      const fmt = ms => new Date(ms).toLocaleTimeString('en-US',
+        { timeZone:'America/New_York', hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+      const label = `[${fmt(bucketStart)}→${fmt(bucketEnd)}] Up $${v.up.toFixed(0)} · Down $${v.down.toFixed(0)} · Σ $${total.toFixed(0)}`;
+      // Snap pill x to bucket centre so it visually "locks" to the current bucket
+      const snapX = scales.x.getPixelForValue(bucketStart + 7_500);
       const tw = ctx.measureText(label).width + 14;
-      ctx.fillStyle = '#1e3a5f'; ctx.fillRect(xPixel - tw/2, bottom + 2, tw, 18);
-      ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(xPixel - tw/2, bottom + 2, tw, 18);
+      ctx.fillStyle = '#1e3a5f'; ctx.fillRect(snapX - tw/2, bottom + 2, tw, 18);
+      ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(snapX - tw/2, bottom + 2, tw, 18);
       ctx.fillStyle = '#93c5fd'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(label, xPixel, bottom + 11);
+      ctx.fillText(label, snapX, bottom + 11);
     }
 
   }
@@ -456,6 +460,10 @@ const volumeBarsPlugin = {
     ctx.save();
     ctx.beginPath(); ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top); ctx.clip();
 
+    // Which bucket is the crosshair hovering, if any?
+    const hoveredBucket = _crosshairTime != null
+      ? Math.floor(_crosshairTime / 15_000) * 15_000 : null;
+
     for (let i = 0; i < up.length; i++) {
       const t = up[i].x;
       const cx = xs.getPixelForValue(t);
@@ -466,18 +474,26 @@ const volumeBarsPlugin = {
       const downVal = down[i].y || 0;
       if (upVal === 0 && downVal === 0) continue;
 
+      const isHovered = (t === hoveredBucket);
+      const upColor   = isHovered ? 'rgba(16,185,129,1)'  : 'rgba(16,185,129,0.85)';
+      const downColor = isHovered ? 'rgba(239,68,68,1)'   : 'rgba(239,68,68,0.85)';
+
       const yUp   = ys.getPixelForValue(upVal);
       const yDown = ys.getPixelForValue(upVal + downVal);
 
-      // Up bar sits at bottom (anchored on $0)
       if (upVal > 0) {
-        ctx.fillStyle = 'rgba(16,185,129,0.85)';
+        ctx.fillStyle = upColor;
         ctx.fillRect(left, yUp, barW, y0 - yUp);
       }
-      // Down stacked on top of Up
       if (downVal > 0) {
-        ctx.fillStyle = 'rgba(239,68,68,0.85)';
+        ctx.fillStyle = downColor;
         ctx.fillRect(left, yDown, barW, yUp - yDown);
+      }
+      // Outline on the hovered bar so it pops out
+      if (isHovered && (upVal > 0 || downVal > 0)) {
+        ctx.strokeStyle = '#93c5fd';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(left + 0.5, yDown + 0.5, barW - 1, y0 - yDown - 1);
       }
     }
     ctx.restore();
