@@ -45,37 +45,31 @@
   <div class="card p-4"><div class="stat-label">Total Volume</div><div class="stat-value text-white" id="s-vol">—</div></div>
 </div>
 
-<!-- Price + Trades chart (full width) -->
-<div class="card p-5 mb-4 chart-card" id="price-card">
+<!-- Price + Volume panel (TradingView style) -->
+<div class="card mb-4 chart-card" id="price-card" style="padding:1.25rem 1.25rem 0.5rem">
   <div class="flex items-center justify-between mb-3">
-    <span class="text-white font-semibold text-sm">Price · Best Bid/Ask · Trades</span>
+    <span class="text-white font-semibold text-sm">Price · Trades · Volume</span>
     <div class="flex items-center gap-2">
       <span class="text-slate-500 text-xs">Scroll to zoom · Drag to pan</span>
       <button class="chart-btn" onclick="resetZoom()">Reset zoom</button>
       <button class="chart-btn" onclick="openFullscreen('price-card')">⛶ Fullscreen</button>
     </div>
   </div>
-  <div style="height:320px"><canvas id="priceChart"></canvas></div>
+  <!-- Price panel -->
+  <div style="height:300px; position:relative"><canvas id="priceChart"></canvas></div>
+  <!-- Divider -->
+  <div style="height:1px;background:#334155;margin:0 -0.25rem"></div>
+  <!-- Volume panel — no x labels (shared with price), no top padding -->
+  <div style="height:90px; position:relative"><canvas id="volumeChart"></canvas></div>
 </div>
 
-<div class="grid grid-cols-3 gap-4 mb-4">
-  <!-- Volume -->
-  <div class="card p-5 chart-card" id="vol-card">
-    <div class="flex items-center justify-between mb-3">
-      <span class="text-white font-semibold text-sm">Volume (30s buckets)</span>
-      <button class="chart-btn" onclick="openFullscreen('vol-card')">⛶</button>
-    </div>
-    <div style="height:260px"><canvas id="volumeChart"></canvas></div>
+<!-- Order Book Depth (full width) -->
+<div class="card p-5 mb-4 chart-card" id="depth-card">
+  <div class="flex items-center justify-between mb-3">
+    <span class="text-white font-semibold text-sm">Order Book Depth</span>
+    <button class="chart-btn" onclick="openFullscreen('depth-card')">⛶</button>
   </div>
-
-  <!-- Order Book Depth -->
-  <div class="card p-5 col-span-2 chart-card" id="depth-card">
-    <div class="flex items-center justify-between mb-3">
-      <span class="text-white font-semibold text-sm">Order Book Depth</span>
-      <button class="chart-btn" onclick="openFullscreen('depth-card')">⛶</button>
-    </div>
-    <div style="height:260px"><canvas id="depthChart"></canvas></div>
-  </div>
+  <div style="height:220px"><canvas id="depthChart"></canvas></div>
 </div>
 
 <!-- Delta stats + Trade table -->
@@ -132,6 +126,7 @@ document.addEventListener('fullscreenchange', () => {
 
 // ── Data load ──────────────────────────────────────────────────────────────
 let _priceChart = null;
+let _volChart   = null;
 
 async function loadAll() {
   const [snaps, trades, volume, depth, deltas] = await Promise.all([
@@ -143,7 +138,7 @@ async function loadAll() {
   ]);
   fillStats(snaps, trades);
   renderPriceChart(snaps, trades);
-  renderVolumeChart(volume);
+  renderVolumeChart(volume, snaps);   // pass snaps for x-axis range alignment
   renderDepthChart(depth);
   fillDeltas(deltas);
   fillTradesTable(trades);
@@ -217,8 +212,9 @@ function renderPriceChart(snaps, trades) {
           callbacks: { label: ctx => `${ctx.dataset.label}: ${(ctx.parsed.y||0).toFixed(4)}` }
         },
         zoom: {
-          zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x' },
-          pan:  { enabled:true, mode:'x' },
+          zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x',
+                  onZoom: syncVolume },
+          pan:  { enabled:true, mode:'x', onPan: syncVolume },
         },
       },
       scales: {
@@ -242,37 +238,82 @@ function renderPriceChart(snaps, trades) {
   });
 }
 
-function resetZoom() { _priceChart?.resetZoom(); }
+function resetZoom() {
+  _priceChart?.resetZoom();
+  _volChart?.resetZoom();
+}
 
-// ── Volume chart ───────────────────────────────────────────────────────────
-function renderVolumeChart(volume) {
-  if (!volume.length) return;
+// Sync volume chart x-axis to match price chart after zoom/pan
+function syncVolume() {
+  if (!_volChart || !_priceChart) return;
+  const { min, max } = _priceChart.scales.x;
+  _volChart.options.scales.x.min = min;
+  _volChart.options.scales.x.max = max;
+  _volChart.update('none');
+}
+
+// ── Volume chart (synced panel below price) ───────────────────────────────
+function renderVolumeChart(volume, snaps) {
   const map = {};
   volume.forEach(v => {
     if (!map[v.bucket]) map[v.bucket] = { up:0, down:0 };
     if (v.outcome?.toLowerCase().includes('up')) map[v.bucket].up   += v.volume;
     else                                          map[v.bucket].down += v.volume;
   });
-  const labels = Object.keys(map).sort();
-  new Chart(document.getElementById('volumeChart'), {
+
+  // Use same time domain as price snapshots so the axes align
+  const xMin = snaps.length ? snaps[0].ts : undefined;
+  const xMax = snaps.length ? snaps[snaps.length-1].ts : undefined;
+
+  // Convert bucket strings to timestamps for time axis
+  const datasets = (() => {
+    const keys = Object.keys(map).sort();
+    return [
+      { label:'Up Vol',   data: keys.map(k => ({ x:k, y:map[k].up   })),
+        backgroundColor:'rgba(16,185,129,0.7)', stack:'v' },
+      { label:'Down Vol', data: keys.map(k => ({ x:k, y:map[k].down })),
+        backgroundColor:'rgba(239,68,68,0.7)',  stack:'v' },
+    ];
+  })();
+
+  _volChart = new Chart(document.getElementById('volumeChart'), {
     type:'bar',
-    data: { labels,
-      datasets: [
-        { label:'Up',   data:labels.map(l=>map[l].up),   backgroundColor:'rgba(16,185,129,0.75)', stack:'v' },
-        { label:'Down', data:labels.map(l=>map[l].down), backgroundColor:'rgba(239,68,68,0.75)',  stack:'v' },
-      ]
-    },
+    data: { datasets },
     options: {
       responsive:true, maintainAspectRatio:false, animation:false,
+      layout: { padding: { top:0 } },
       plugins: {
-        legend: { display:true, labels:{ color:'#94a3b8', usePointStyle:true, font:{size:10} } }
+        legend: { display:false },   // legend is on price chart, keep this clean
+        tooltip: {
+          callbacks: { label: ctx => `${ctx.dataset.label}: $${(ctx.parsed.y||0).toFixed(0)}` }
+        },
+        zoom: {
+          zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x',
+                  onZoom: () => syncVolume() },
+          pan:  { enabled:true, mode:'x', onPan: () => syncVolume() },
+        },
       },
       scales: {
-        x: { stacked:true, grid:GRID,
-             ticks:{ color:'#64748b', maxTicksLimit:6,
-                     callback:(_,i) => labels[i] ? labels[i].slice(11,16) : '' } },
-        y: { stacked:true, grid:GRID,
-             ticks:{ color:'#64748b', callback: v => '$'+v.toFixed(0) } },
+        x: {
+          type:'time', stacked:true,
+          min: xMin, max: xMax,
+          time:{ displayFormats:{ minute:'HH:mm', second:'HH:mm' } },
+          grid: GRID,
+          ticks: {
+            color:'#64748b', maxTicksLimit:6,
+            callback(value) {
+              const d = new Date(value);
+              const utc   = d.toISOString().slice(11,16) + ' UTC';
+              const local = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+              return [utc, local];
+            }
+          }
+        },
+        y: {
+          stacked:true, grid:GRID,
+          ticks:{ color:'#64748b', maxTicksLimit:3,
+                  callback: v => '$'+v.toFixed(0) }
+        },
       }
     }
   });
