@@ -149,54 +149,60 @@ function cleanTicks(scale) {
 }
 
 // ── Crosshair plugin ───────────────────────────────────────────────────────
+// Shared x-axis state in TIME-domain (ms) so both charts can render the line
 let _mouseOnPrice = false, _cursorX = null, _cursorY = null;
+let _crosshairTime = null;   // ms timestamp the user is hovering at
 
 const crosshairPlugin = {
   id: 'crosshair',
   afterDraw(chart) {
-    if (chart.canvas.id !== 'priceChart') return;
-    if (!_mouseOnPrice || _cursorX === null || _cursorY === null) return;
-    const { ctx, chartArea: { top, bottom, left, right }, scales } = chart;
-    if (_cursorX < left || _cursorX > right || _cursorY < top || _cursorY > bottom) return;
+    const isPrice  = chart.canvas.id === 'priceChart';
+    const isVolume = chart.canvas.id === 'volumeChart';
+    if (!isPrice && !isVolume) return;
+    if (_crosshairTime == null) return;
 
-    const yVal = scales.y.getValueForPixel(_cursorY);
-    const xVal = scales.x.getValueForPixel(_cursorX);
+    const { ctx, chartArea: { top, bottom, left, right }, scales } = chart;
+    const xPixel = scales.x.getPixelForValue(_crosshairTime);
+    if (xPixel < left || xPixel > right) return;
 
     ctx.save();
     ctx.setLineDash([4, 4]);
     ctx.strokeStyle = 'rgba(148,163,184,0.45)';
     ctx.lineWidth = 1;
-    // Vertical at exact cursor x
-    ctx.beginPath(); ctx.moveTo(_cursorX, top); ctx.lineTo(_cursorX, bottom); ctx.stroke();
-    // Horizontal at exact cursor y
-    ctx.beginPath(); ctx.moveTo(left, _cursorY); ctx.lineTo(right, _cursorY); ctx.stroke();
+    // Vertical line on BOTH charts (shared time)
+    ctx.beginPath(); ctx.moveTo(xPixel, top); ctx.lineTo(xPixel, bottom); ctx.stroke();
+    // Horizontal line + Y-axis pill ONLY on the chart that owns the cursor
+    if (isPrice && _mouseOnPrice && _cursorY !== null && _cursorY >= top && _cursorY <= bottom) {
+      ctx.beginPath(); ctx.moveTo(left, _cursorY); ctx.lineTo(right, _cursorY); ctx.stroke();
+    }
     ctx.setLineDash([]);
-
     ctx.font = '11px monospace';
 
-    // Y-axis pill
-    if (yVal != null) {
-      const label = yVal.toFixed(3);
-      const tw = ctx.measureText(label).width + 12;
-      ctx.fillStyle = '#1e3a5f'; ctx.fillRect(left - tw - 2, _cursorY - 9, tw, 18);
-      ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(left - tw - 2, _cursorY - 9, tw, 18);
-      ctx.fillStyle = '#93c5fd'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-      ctx.fillText(label, left - 8, _cursorY);
+    // Y-axis pill (price chart only)
+    if (isPrice && _mouseOnPrice && _cursorY !== null) {
+      const yVal = scales.y.getValueForPixel(_cursorY);
+      if (yVal != null && _cursorY >= top && _cursorY <= bottom) {
+        const label = yVal.toFixed(3);
+        const tw = ctx.measureText(label).width + 12;
+        ctx.fillStyle = '#1e3a5f'; ctx.fillRect(left - tw - 2, _cursorY - 9, tw, 18);
+        ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(left - tw - 2, _cursorY - 9, tw, 18);
+        ctx.fillStyle = '#93c5fd'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        ctx.fillText(label, left - 8, _cursorY);
+      }
     }
 
-    // X-axis pill (ET time)
-    if (xVal != null) {
-      const d = new Date(xVal);
+    // X-axis pill — only on the volume chart so it appears under both panels once
+    if (isVolume) {
+      const d = new Date(_crosshairTime);
       const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York',
         hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
       const tw = ctx.measureText(et).width + 12;
-      ctx.fillStyle = '#1e3a5f'; ctx.fillRect(_cursorX - tw/2, bottom + 2, tw, 18);
-      ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(_cursorX - tw/2, bottom + 2, tw, 18);
+      ctx.fillStyle = '#1e3a5f'; ctx.fillRect(xPixel - tw/2, bottom + 2, tw, 18);
+      ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(xPixel - tw/2, bottom + 2, tw, 18);
       ctx.fillStyle = '#93c5fd'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(et, _cursorX, bottom + 11);
+      ctx.fillText(et, xPixel, bottom + 11);
     }
 
-    ctx.restore();
   }
 };
 Chart.register(crosshairPlugin);
@@ -374,21 +380,24 @@ function renderPriceChart(snaps, trades) {
     }
   });
 
-  // Wire up crosshair mouse tracking — both X and Y in CSS pixels
-  const canvas = document.getElementById('priceChart');
-  let _rafScheduled = false;
-  canvas.addEventListener('mousemove', e => {
-    const rect = canvas.getBoundingClientRect();
+  // Mouse tracking on price chart — sets shared _crosshairTime so the
+  // vertical line also appears on the volume chart underneath
+  const priceCanvas = document.getElementById('priceChart');
+  let _rafPrice = false;
+  priceCanvas.addEventListener('mousemove', e => {
+    const rect = priceCanvas.getBoundingClientRect();
     _cursorX = e.clientX - rect.left;
     _cursorY = e.clientY - rect.top;
+    _crosshairTime = _priceChart.scales.x.getValueForPixel(_cursorX);
     _mouseOnPrice = true;
-    if (!_rafScheduled) {
-      _rafScheduled = true;
-      requestAnimationFrame(() => { _rafScheduled = false; _priceChart.draw(); });
+    if (!_rafPrice) {
+      _rafPrice = true;
+      requestAnimationFrame(() => { _rafPrice = false; _priceChart.draw(); _volChart?.draw(); });
     }
   });
-  canvas.addEventListener('mouseleave', () => {
-    _mouseOnPrice = false; _cursorX = null; _cursorY = null; _priceChart.draw();
+  priceCanvas.addEventListener('mouseleave', () => {
+    _mouseOnPrice = false; _cursorX = null; _cursorY = null; _crosshairTime = null;
+    _priceChart.draw(); _volChart?.draw();
   });
 }
 
@@ -465,13 +474,28 @@ function renderVolumeChart(volume, snaps) {
       layout: { padding:{ top:4 } },
       plugins: {
         legend: { display:false },
-        tooltip: { callbacks:{ label: ctx => `${ctx.dataset.label}: $${(ctx.parsed.y||0).toFixed(0)}` } },
+        tooltip: {
+          // Hovering anywhere over the bar's x-slot shows BOTH stacks at once
+          mode: 'index',
+          intersect: false,
+          callbacks: {
+            title: ctx => {
+              const start = new Date(ctx[0].parsed.x);
+              const end   = new Date(ctx[0].parsed.x + 15_000);
+              const fmt = d => d.toLocaleTimeString('en-US', { timeZone:'America/New_York',
+                hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+              return `${fmt(start)} → ${fmt(end)} ET`;
+            },
+            label: ctx => `${ctx.dataset.label}: $${(ctx.parsed.y||0).toFixed(2)}`,
+          },
+        },
         zoom: {
           limits: ZOOM_LIMITS,
           zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x', onZoom: syncVolume },
           pan:  { enabled:true, mode:'x', onPan: syncVolume },
         },
       },
+      interaction: { mode:'index', intersect:false },
       scales: {
         x: {
           type:'time', stacked:true,
@@ -500,6 +524,25 @@ function renderVolumeChart(volume, snaps) {
   });
   // Set initial bar widths to exactly 15s after layout is computed
   requestAnimationFrame(() => { fitBarThickness(); _volChart.update(); });
+
+  // Mouse tracking on volume chart — also updates the shared crosshair time
+  const volCanvas = document.getElementById('volumeChart');
+  let _rafVol = false;
+  volCanvas.addEventListener('mousemove', e => {
+    const rect = volCanvas.getBoundingClientRect();
+    const xPixel = e.clientX - rect.left;
+    _crosshairTime = _volChart.scales.x.getValueForPixel(xPixel);
+    _mouseOnPrice = false;   // horizontal line + price y-pill suppressed
+    _cursorY = null;
+    if (!_rafVol) {
+      _rafVol = true;
+      requestAnimationFrame(() => { _rafVol = false; _volChart.draw(); _priceChart?.draw(); });
+    }
+  });
+  volCanvas.addEventListener('mouseleave', () => {
+    _crosshairTime = null;
+    _volChart.draw(); _priceChart?.draw();
+  });
 }
 
 // ── Order book depth chart ─────────────────────────────────────────────────
