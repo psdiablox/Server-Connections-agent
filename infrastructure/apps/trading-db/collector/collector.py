@@ -203,14 +203,13 @@ _HANDLERS = {
 
 async def ws_loop(state: CollectorState) -> None:
     subscribed: set[str] = set()
-    IDLE_TIMEOUT = 90  # force reconnect if no msg received for this many seconds
+    EVENT_IDLE_TIMEOUT = 120  # force reconnect if no DATA event in this many seconds
+    RECV_TIMEOUT       = 30   # max time to wait per recv() call
 
     while True:
         try:
             async with websockets.connect(
                 config.CLOB_WS,
-                # Protocol-level ping/pong — websockets library closes the
-                # connection if no PONG comes back within ping_timeout.
                 ping_interval=20,
                 ping_timeout=20,
                 open_timeout=15,
@@ -224,17 +223,21 @@ async def ws_loop(state: CollectorState) -> None:
                     _ping_loop(ws, state, subscribed), name="ws-ping"
                 )
 
-                # Application-level idle watchdog: if we haven't received any
-                # message in IDLE_TIMEOUT seconds, the connection is a zombie
-                # (Polymarket has stopped pushing) — close to force reconnect.
+                # Watchdog: track time since last DATA event (book / trade /
+                # price_change). PONGs to our manual PINGs do NOT reset this —
+                # Polymarket can keep ponging while the data stream is dead.
+                last_event = asyncio.get_event_loop().time()
                 try:
                     while True:
                         try:
-                            raw = await asyncio.wait_for(ws.recv(), timeout=IDLE_TIMEOUT)
+                            raw = await asyncio.wait_for(ws.recv(), timeout=RECV_TIMEOUT)
                         except asyncio.TimeoutError:
-                            log.warning("websocket idle %ds — forcing reconnect", IDLE_TIMEOUT)
-                            await ws.close()
-                            break
+                            # No bytes at all in 30s — check overall idle time
+                            if asyncio.get_event_loop().time() - last_event > EVENT_IDLE_TIMEOUT:
+                                log.warning("websocket data-idle %ds — forcing reconnect", EVENT_IDLE_TIMEOUT)
+                                await ws.close()
+                                break
+                            continue
 
                         try:
                             payload = json.loads(raw)
@@ -247,12 +250,19 @@ async def ws_loop(state: CollectorState) -> None:
                                 continue
                             event_type = msg.get("event_type") or msg.get("type", "")
                             if event_type in ("PONG", "pong"):
-                                continue
+                                continue   # ← PONGs do NOT reset the watchdog
                             handler = _HANDLERS.get(event_type)
                             if handler:
+                                last_event = asyncio.get_event_loop().time()
                                 await handler(msg, state)
                             else:
                                 log.debug("unhandled event: %s", event_type)
+
+                        # Also fire the watchdog from inside the loop
+                        if asyncio.get_event_loop().time() - last_event > EVENT_IDLE_TIMEOUT:
+                            log.warning("websocket data-idle %ds — forcing reconnect", EVENT_IDLE_TIMEOUT)
+                            await ws.close()
+                            break
                 finally:
                     ping_task.cancel()
 
