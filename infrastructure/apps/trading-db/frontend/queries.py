@@ -135,23 +135,25 @@ async def get_book_depth(market_id: int, token_id: str) -> Optional[dict]:
     return {"bids": row["bids"], "asks": row["asks"]}
 
 
-async def get_data_gaps(market_id: int, threshold_sec: int = 5) -> list[dict]:
-    """Find time ranges in this market where snapshot polling stopped for
-    more than `threshold_sec` (collector should be polling at 1Hz).
-    Returns [{start, end, dur_sec}, ...]."""
+async def get_data_gaps(market_id: int) -> list[dict]:
+    """Return outages that overlap this market's window. Reads from the
+    explicit collector_outages log written by the collector itself.
+    Each row: {start, gap_end, dur_sec, reason}."""
     rows = await _pool.fetch("""
-        WITH ordered AS (
-            SELECT ts, LAG(ts) OVER (ORDER BY ts) AS prev_ts
-            FROM polymarket.price_snapshots
-            WHERE market_id = $1
-        )
-        SELECT prev_ts AS start, ts AS gap_end,
-               EXTRACT(EPOCH FROM (ts - prev_ts))::int AS dur_sec
-        FROM ordered
-        WHERE prev_ts IS NOT NULL
-          AND EXTRACT(EPOCH FROM (ts - prev_ts)) > $2
-        ORDER BY prev_ts
-    """, market_id, threshold_sec)
+        SELECT
+            GREATEST(o.start_ts, m.start_ts)                AS start,
+            LEAST(COALESCE(o.end_ts, NOW()), m.end_ts)      AS gap_end,
+            EXTRACT(EPOCH FROM
+                LEAST(COALESCE(o.end_ts, NOW()), m.end_ts)
+              - GREATEST(o.start_ts, m.start_ts)
+            )::int                                          AS dur_sec,
+            o.reason                                        AS reason
+        FROM polymarket.collector_outages o
+        JOIN polymarket.markets m ON m.id = $1
+        WHERE o.start_ts < m.end_ts
+          AND COALESCE(o.end_ts, NOW()) > m.start_ts
+        ORDER BY start
+    """, market_id)
     return _fmt(rows)
 
 

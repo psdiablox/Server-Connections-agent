@@ -178,11 +178,12 @@ const dataGapPlugin = {
         ctx.lineWidth = 1;
         ctx.strokeRect(x0 + 0.5, ca.top + 0.5, x1 - x0 - 1, ca.bottom - ca.top - 1);
         ctx.setLineDash([]);
-        if (x1 - x0 > 50) {
+        if (x1 - x0 > 60) {
           ctx.fillStyle = 'rgba(239, 68, 68, 0.85)';
           ctx.font = '10px monospace';
           ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-          ctx.fillText(`no data · ${g.dur_sec}s`, (x0 + x1) / 2, ca.top + 4);
+          const lbl = `${g.reason || 'no data'} · ${g.dur_sec}s`;
+          ctx.fillText(lbl, (x0 + x1) / 2, ca.top + 4);
         }
       }
     }

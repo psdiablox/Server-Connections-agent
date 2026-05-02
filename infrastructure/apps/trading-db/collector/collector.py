@@ -223,18 +223,19 @@ async def ws_loop(state: CollectorState) -> None:
                     _ping_loop(ws, state, subscribed), name="ws-ping"
                 )
 
-                # Watchdog: track time since last DATA event (book / trade /
-                # price_change). PONGs to our manual PINGs do NOT reset this —
-                # Polymarket can keep ponging while the data stream is dead.
+                # Watchdog: track time since last DATA event. Outage row is
+                # opened the moment we declare the WS dead and closed when
+                # the next reconnect produces data again.
                 last_event = asyncio.get_event_loop().time()
+                last_event_wall = datetime.now(timezone.utc)
                 try:
                     while True:
                         try:
                             raw = await asyncio.wait_for(ws.recv(), timeout=RECV_TIMEOUT)
                         except asyncio.TimeoutError:
-                            # No bytes at all in 30s — check overall idle time
                             if asyncio.get_event_loop().time() - last_event > EVENT_IDLE_TIMEOUT:
                                 log.warning("websocket data-idle %ds — forcing reconnect", EVENT_IDLE_TIMEOUT)
+                                await db.outage_record(last_event_wall, None, "ws_zombie")
                                 await ws.close()
                                 break
                             continue
@@ -245,22 +246,29 @@ async def ws_loop(state: CollectorState) -> None:
                             continue
 
                         msgs = payload if isinstance(payload, list) else [payload]
+                        got_data = False
                         for msg in msgs:
                             if not isinstance(msg, dict):
                                 continue
                             event_type = msg.get("event_type") or msg.get("type", "")
                             if event_type in ("PONG", "pong"):
-                                continue   # ← PONGs do NOT reset the watchdog
+                                continue
                             handler = _HANDLERS.get(event_type)
                             if handler:
                                 last_event = asyncio.get_event_loop().time()
+                                last_event_wall = datetime.now(timezone.utc)
+                                got_data = True
                                 await handler(msg, state)
                             else:
                                 log.debug("unhandled event: %s", event_type)
 
-                        # Also fire the watchdog from inside the loop
+                        # First real data → close any open outage (recovery)
+                        if got_data:
+                            await db.outage_close_open()
+
                         if asyncio.get_event_loop().time() - last_event > EVENT_IDLE_TIMEOUT:
                             log.warning("websocket data-idle %ds — forcing reconnect", EVENT_IDLE_TIMEOUT)
+                            await db.outage_record(last_event_wall, None, "ws_zombie")
                             await ws.close()
                             break
                 finally:
@@ -268,9 +276,13 @@ async def ws_loop(state: CollectorState) -> None:
 
         except (websockets.exceptions.ConnectionClosed, OSError, asyncio.TimeoutError) as exc:
             log.warning("websocket disconnected: %s — reconnecting in 5s", exc)
+            try: await db.outage_open("ws_disconnect")
+            except Exception: pass
             await asyncio.sleep(5)
         except Exception as exc:
             log.error("websocket error: %s — reconnecting in 10s", exc, exc_info=True)
+            try: await db.outage_open("ws_error")
+            except Exception: pass
             await asyncio.sleep(10)
 
 

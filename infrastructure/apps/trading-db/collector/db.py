@@ -138,6 +138,52 @@ async def insert_book_checkpoint(
         )
 
 
+async def last_event_ts() -> Optional[datetime]:
+    """Most recent timestamp across snapshots and trades — used at startup
+    to detect how long the collector has been down."""
+    async with _conn() as conn:
+        return await conn.fetchval("""
+            SELECT MAX(ts) FROM (
+                SELECT MAX(ts) AS ts FROM polymarket.price_snapshots
+                UNION ALL
+                SELECT MAX(ts) AS ts FROM polymarket.trades
+            ) x
+        """)
+
+
+async def outage_record(start_ts: datetime, end_ts: Optional[datetime], reason: str) -> int:
+    """Insert a closed outage row (end_ts may be None for ongoing)."""
+    async with _conn() as conn:
+        row = await conn.fetchrow("""
+            INSERT INTO polymarket.collector_outages (start_ts, end_ts, reason)
+            VALUES ($1, $2, $3) RETURNING id
+        """, start_ts, end_ts, reason)
+        return row["id"]
+
+
+async def outage_open(reason: str) -> int:
+    """Open a new outage if no other is open. Returns the id."""
+    async with _conn() as conn:
+        existing = await conn.fetchval(
+            "SELECT id FROM polymarket.collector_outages WHERE end_ts IS NULL LIMIT 1"
+        )
+        if existing:
+            return existing
+        row = await conn.fetchrow("""
+            INSERT INTO polymarket.collector_outages (start_ts, reason)
+            VALUES (NOW(), $1) RETURNING id
+        """, reason)
+        return row["id"]
+
+
+async def outage_close_open() -> None:
+    """Close every still-open outage row with NOW(). Called on graceful close."""
+    async with _conn() as conn:
+        await conn.execute(
+            "UPDATE polymarket.collector_outages SET end_ts = NOW() WHERE end_ts IS NULL"
+        )
+
+
 async def insert_book_deltas(rows: list[tuple]) -> None:
     # row = (ts, market_id, token_id, side, price, size)
     if not rows:
