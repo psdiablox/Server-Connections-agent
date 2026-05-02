@@ -72,8 +72,8 @@
   </div>
   <!-- Divider -->
   <div style="height:1px;background:#334155;margin:0 -0.25rem"></div>
-  <!-- Volume panel — no x labels (shared with price), no top padding -->
-  <div style="height:90px; position:relative"><canvas id="volumeChart"></canvas></div>
+  <!-- Volume panel -->
+  <div style="height:130px; position:relative"><canvas id="volumeChart"></canvas></div>
 </div>
 
 <!-- Order Book Depth (full width) -->
@@ -279,10 +279,10 @@ function resetZoom() {
 // Sync volume chart x-axis to match price chart after zoom/pan
 function syncVolume() {
   if (!_volChart || !_priceChart) return;
-  // price chart time scale exposes min/max as ms timestamps
   _volChart.options.scales.x.min = _priceChart.scales.x.min;
   _volChart.options.scales.x.max = _priceChart.scales.x.max;
-  _volChart.update('none');
+  // Full update (not 'none') so y-axis rescales to fit visible bars
+  _volChart.update();
 }
 
 // ── Volume chart (synced panel below price) ───────────────────────────────
