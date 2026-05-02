@@ -60,8 +60,9 @@
       <button class="chart-btn" onclick="openFullscreen('price-card')">⛶ Fullscreen</button>
     </div>
   </div>
-  <!-- Price panel -->
-  <div style="height:300px; position:relative">
+  <!-- Single canvas with stacked y-axes (price on top, volume on bottom)
+       — guarantees the x-axis is shared so the crosshair is always aligned. -->
+  <div style="height:480px; position:relative">
     <canvas id="priceChart"></canvas>
     <div id="no-data-msg" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;">
       <div class="text-center">
@@ -70,10 +71,6 @@
       </div>
     </div>
   </div>
-  <!-- Divider -->
-  <div style="height:1px;background:#334155;margin:0 -0.25rem"></div>
-  <!-- Volume panel (extra height for the bottom pill) -->
-  <div style="height:160px; position:relative"><canvas id="volumeChart"></canvas></div>
 </div>
 
 <!-- Order Book Depth (full width) -->
@@ -156,7 +153,7 @@ let _dataGaps = [];   // [{start: ISO, gap_end: ISO, dur_sec: int}]
 const dataGapPlugin = {
   id: 'dataGap',
   beforeDatasetsDraw(chart) {
-    if (chart.canvas.id !== 'priceChart' && chart.canvas.id !== 'volumeChart') return;
+    if (chart.canvas.id !== 'priceChart') return;
     if (!_dataGaps?.length) return;
     const { ctx, scales: { x }, chartArea: ca } = chart;
     ctx.save();
@@ -201,71 +198,62 @@ let _volBucketLookup = null; // Map<bucketStartMs, {up, down}> for the bottom pi
 const crosshairPlugin = {
   id: 'crosshair',
   afterDraw(chart) {
-    const isPrice  = chart.canvas.id === 'priceChart';
-    const isVolume = chart.canvas.id === 'volumeChart';
-    if (!isPrice && !isVolume) return;
-    if (_crosshairTime == null) return;
+    if (chart.canvas.id !== 'priceChart' || _crosshairTime == null) return;
+    const { ctx, scales } = chart;
+    const ca = chart.chartArea;
+    const yP = scales.yPrice;
 
-    const { ctx, chartArea: { top, bottom, left, right }, scales } = chart;
     const xPixel = scales.x.getPixelForValue(_crosshairTime);
-    if (xPixel < left || xPixel > right) return;
+    if (xPixel < ca.left || xPixel > ca.right) return;
 
     ctx.save();
     ctx.setLineDash([4, 4]);
     ctx.strokeStyle = 'rgba(148,163,184,0.45)';
     ctx.lineWidth = 1;
-    // Vertical line on BOTH charts (shared time)
-    ctx.beginPath(); ctx.moveTo(xPixel, top); ctx.lineTo(xPixel, bottom); ctx.stroke();
-    // Horizontal line + Y-axis pill ONLY on the chart that owns the cursor
-    if (isPrice && _mouseOnPrice && _cursorY !== null && _cursorY >= top && _cursorY <= bottom) {
-      ctx.beginPath(); ctx.moveTo(left, _cursorY); ctx.lineTo(right, _cursorY); ctx.stroke();
+    // Single vertical line through the entire chart area (price + volume regions)
+    ctx.beginPath(); ctx.moveTo(xPixel, ca.top); ctx.lineTo(xPixel, ca.bottom); ctx.stroke();
+
+    const inPrice = _cursorY !== null && yP && _cursorY >= yP.top && _cursorY <= yP.bottom;
+    if (inPrice) {
+      ctx.beginPath(); ctx.moveTo(ca.left, _cursorY); ctx.lineTo(ca.right, _cursorY); ctx.stroke();
     }
     ctx.setLineDash([]);
     ctx.font = '11px monospace';
 
-    // Y-axis pill (price chart only)
-    if (isPrice && _mouseOnPrice && _cursorY !== null) {
-      const yVal = scales.y.getValueForPixel(_cursorY);
-      if (yVal != null && _cursorY >= top && _cursorY <= bottom) {
+    // Y-axis price pill — only when cursor is in the price (top) region
+    if (inPrice) {
+      const yVal = yP.getValueForPixel(_cursorY);
+      if (yVal != null) {
         const label = yVal.toFixed(3);
         const tw = ctx.measureText(label).width + 12;
-        ctx.fillStyle = '#1e3a5f'; ctx.fillRect(left - tw - 2, _cursorY - 9, tw, 18);
-        ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(left - tw - 2, _cursorY - 9, tw, 18);
+        ctx.fillStyle = '#1e3a5f'; ctx.fillRect(ca.left - tw - 2, _cursorY - 9, tw, 18);
+        ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(ca.left - tw - 2, _cursorY - 9, tw, 18);
         ctx.fillStyle = '#93c5fd'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-        ctx.fillText(label, left - 8, _cursorY);
+        ctx.fillText(label, ca.left - 8, _cursorY);
       }
     }
 
-    // Time pill — shown under the PRICE panel
-    if (isPrice) {
+    // Bottom-area combined pill: ET time + bucket totals
+    {
       const d = new Date(_crosshairTime);
       const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York',
         hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
-      const tw = ctx.measureText(et).width + 12;
-      ctx.fillStyle = '#1e3a5f'; ctx.fillRect(xPixel - tw/2, bottom + 2, tw, 18);
-      ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(xPixel - tw/2, bottom + 2, tw, 18);
-      ctx.fillStyle = '#93c5fd'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(et, xPixel, bottom + 11);
-    }
-
-    // Volume pill — shows bucket time range + Up/Down totals
-    if (isVolume && _volBucketLookup) {
-      const bucketStart = Math.floor(_crosshairTime / 15_000) * 15_000;
-      const bucketEnd   = bucketStart + 15_000;
-      const v = _volBucketLookup.get(bucketStart) || { up: 0, down: 0 };
-      const total = v.up + v.down;
-      const fmt = ms => new Date(ms).toLocaleTimeString('en-US',
-        { timeZone:'America/New_York', hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
-      const label = `[${fmt(bucketStart)}→${fmt(bucketEnd)}] Up $${v.up.toFixed(0)} · Down $${v.down.toFixed(0)} · Σ $${total.toFixed(0)}`;
-      // Snap pill x to bucket centre so it visually "locks" to the current bucket
-      const snapX = scales.x.getPixelForValue(bucketStart + 7_500);
+      let label = `${et} ET`;
+      if (_volBucketLookup) {
+        const bucketStart = Math.floor(_crosshairTime / 15_000) * 15_000;
+        const v = _volBucketLookup.get(bucketStart);
+        if (v && (v.up || v.down)) {
+          label = `${et} ET · Up $${v.up.toFixed(0)} · Down $${v.down.toFixed(0)} · Σ $${(v.up + v.down).toFixed(0)}`;
+        }
+      }
       const tw = ctx.measureText(label).width + 14;
-      ctx.fillStyle = '#1e3a5f'; ctx.fillRect(snapX - tw/2, bottom + 2, tw, 18);
-      ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(snapX - tw/2, bottom + 2, tw, 18);
+      ctx.fillStyle = '#1e3a5f'; ctx.fillRect(xPixel - tw/2, ca.bottom + 2, tw, 18);
+      ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.strokeRect(xPixel - tw/2, ca.bottom + 2, tw, 18);
       ctx.fillStyle = '#93c5fd'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(label, snapX, bottom + 11);
+      ctx.fillText(label, xPixel, ca.bottom + 11);
     }
 
+    ctx.restore();
   }
 };
 Chart.register(crosshairPlugin);
@@ -311,7 +299,7 @@ document.addEventListener('fullscreenchange', () => {
 
 // ── Data load ──────────────────────────────────────────────────────────────
 let _priceChart = null;
-let _volChart   = null;
+let _volBars    = [];   // [{x: ms, up, down}] — pre-filled 15s buckets
 
 async function loadAll() {
   const [snaps, trades, volume, depth, deltas, gaps] = await Promise.all([
@@ -323,12 +311,34 @@ async function loadAll() {
     fetch(`/api/markets/${MID}/gaps`).then(r => r.json()),
   ]);
   _dataGaps = gaps || [];
+  buildVolumeBuckets(volume);
   fillStats(snaps, trades);
   renderPriceChart(snaps, trades);
-  renderVolumeChart(volume, snaps);
   renderDepthChart(depth);
   fillDeltas(deltas);
   fillTradesTable(trades);
+}
+
+// Pre-fill every 15s bucket from MARKET_START to MARKET_END so the volumeBars
+// plugin has consistent positions to draw at (zero-height where no trades).
+function buildVolumeBuckets(volume) {
+  const BUCKET = 15_000;
+  const map = new Map();
+  for (const v of volume) {
+    const ms = new Date(v.bucket).getTime();
+    if (!map.has(ms)) map.set(ms, { up:0, down:0 });
+    const slot = map.get(ms);
+    if (v.outcome?.toLowerCase().includes('up')) slot.up   += v.volume;
+    else                                          slot.down += v.volume;
+  }
+  const first = Math.floor(MARKET_START / BUCKET) * BUCKET;
+  _volBars = [];
+  _volBucketLookup = new Map();
+  for (let t = first; t <= MARKET_END; t += BUCKET) {
+    const slot = map.get(t) || { up:0, down:0 };
+    _volBars.push({ x: t, ...slot });
+    _volBucketLookup.set(t, slot);
+  }
 }
 
 // ── Stats ──────────────────────────────────────────────────────────────────
@@ -371,41 +381,49 @@ function renderPriceChart(snaps, trades) {
   const dnSells = trades.filter(t => !t.outcome?.toLowerCase().includes('up') && t.side === 'SELL')
                         .map(t => ({ x: t.ts, y: t.price, r: r(t) }));
 
+  // Volume datasets — invisible (drawn manually by volumeBarsPlugin), but
+  // present so Chart.js auto-scales the yVolume axis correctly.
+  const volMax = Math.max(1, ..._volBars.map(b => b.up + b.down));
+
   _priceChart = new Chart(document.getElementById('priceChart'), {
     data: {
       datasets: [
-        { type:'line',   label:'↑ Up',        data:upData,
+        { type:'line', label:'↑ Up', data:upData, yAxisID:'yPrice',
           borderColor:'#10b981', borderWidth:2.5, pointRadius:0, tension:0.1, order:3 },
-        { type:'line',   label:'↓ Down',       data:downData,
+        { type:'line', label:'↓ Down', data:downData, yAxisID:'yPrice',
           borderColor:'#ef4444', borderWidth:2.5, pointRadius:0, tension:0.1, order:3 },
-        { type:'line',   label:'Mid (0.5)',     data:midData,
+        { type:'line', label:'Mid (0.5)', data:midData, yAxisID:'yPrice',
           borderColor:'rgba(100,116,139,0.45)', borderWidth:1, borderDash:[6,3],
           pointRadius:0, order:4 },
-        { type:'bubble', label:'Up · Buy',     data:upBuys,
+        { type:'bubble', label:'Up · Buy', data:upBuys, yAxisID:'yPrice',
           backgroundColor:'rgba(16,185,129,0.85)', order:1 },
-        { type:'bubble', label:'Up · Sell',    data:upSells,
+        { type:'bubble', label:'Up · Sell', data:upSells, yAxisID:'yPrice',
           backgroundColor:'rgba(16,185,129,0.35)', borderColor:'#10b981', borderWidth:1.5, order:1 },
-        { type:'bubble', label:'Down · Buy',   data:dnBuys,
+        { type:'bubble', label:'Down · Buy', data:dnBuys, yAxisID:'yPrice',
           backgroundColor:'rgba(239,68,68,0.85)', order:1 },
-        { type:'bubble', label:'Down · Sell',  data:dnSells,
+        { type:'bubble', label:'Down · Sell', data:dnSells, yAxisID:'yPrice',
           backgroundColor:'rgba(239,68,68,0.35)', borderColor:'#ef4444', borderWidth:1.5, order:1 },
+        // Volume on the same canvas, lower y-axis. Bars drawn by volumeBarsPlugin
+        // — these line entries exist purely to drive the yVolume scale range.
+        { type:'line', label:'_volTrigger', yAxisID:'yVolume',
+          data:[{x: MARKET_START, y: 0}, {x: MARKET_END, y: volMax}],
+          borderColor:'rgba(0,0,0,0)', pointRadius:0, showLine:false, hidden:true },
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
-      // Reserve space below the chartArea for the time pill (drawn at bottom + 2..20)
-      // right:8 mirrored on volume chart so chartArea.right also aligns
       layout: { padding: { bottom: 26, right: 8 } },
       plugins: {
         legend: {
           display: true, position: 'top',
-          labels: { color:'#94a3b8', usePointStyle:true, pointStyleWidth:10, padding:14, font:{size:11} },
+          labels: {
+            color:'#94a3b8', usePointStyle:true, pointStyleWidth:10, padding:14, font:{size:11},
+            filter: item => !item.text.startsWith('_'),  // hide internal datasets
+          },
         },
         tooltip: {
-          // Tooltip ONLY shows when directly over a bubble (intersect:true)
-          // and only one bubble at a time (mode:'point')
           mode:'point', intersect:true,
-          filter: ctx => ctx.dataset.type === 'bubble',  // never tooltips on lines
+          filter: ctx => ctx.dataset.type === 'bubble',
           callbacks: {
             title: ctx => {
               const d = new Date(ctx[0].parsed.x);
@@ -417,11 +435,10 @@ function renderPriceChart(snaps, trades) {
         },
         zoom: {
           limits: ZOOM_LIMITS,
-          zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x', onZoom: syncVolume },
-          pan:  { enabled:true, mode:'x', onPan: syncVolume },
+          zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x' },
+          pan:  { enabled:true, mode:'x' },
         },
       },
-      // Hover/highlight only the exact bubble under the cursor
       interaction: { mode:'point', intersect:true },
       scales: {
         x: {
@@ -433,8 +450,7 @@ function renderPriceChart(snaps, trades) {
           grid: GRID,
           afterBuildTicks: cleanTicks,
           ticks: {
-            color:'#64748b',
-            autoSkip: false,
+            color:'#64748b', autoSkip: false,
             callback(value) {
               const d  = new Date(value);
               const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
@@ -443,17 +459,30 @@ function renderPriceChart(snaps, trades) {
             }
           }
         },
-        y: {
+        // Stacked y-axes: price on top (3/4 of height), volume below (1/4)
+        yPrice: {
+          type:'linear', position:'left',
+          stack:'main', stackWeight: 3,
           min:0, max:1, grid:GRID,
           ticks:{ color:'#64748b', callback: v => v.toFixed(2) },
-          afterFit(s) { s.width = 60; s.paddingTop = 0; s.paddingBottom = 0; },
+        },
+        yVolume: {
+          type:'linear', position:'left',
+          stack:'main', stackWeight: 1,
+          beginAtZero: true,
+          grid:GRID,
+          ticks: {
+            color:'#64748b', maxTicksLimit:3,
+            callback: v => v >= 1000 ? '$'+(v/1000).toFixed(0)+'k'
+                       : v >= 1     ? '$'+v.toFixed(0)
+                       : '$0',
+          },
         },
       }
     }
   });
 
-  // Mouse tracking on price chart — sets shared _crosshairTime so the
-  // vertical line also appears on the volume chart underneath
+  // Mouse tracking on the single canvas
   const priceCanvas = document.getElementById('priceChart');
   let _rafPrice = false;
   priceCanvas.addEventListener('mousemove', e => {
@@ -464,86 +493,66 @@ function renderPriceChart(snaps, trades) {
     _mouseOnPrice = true;
     if (!_rafPrice) {
       _rafPrice = true;
-      requestAnimationFrame(() => { _rafPrice = false; _priceChart.draw(); _volChart?.draw(); });
+      requestAnimationFrame(() => { _rafPrice = false; _priceChart.draw(); });
     }
   });
   priceCanvas.addEventListener('mouseleave', () => {
     _mouseOnPrice = false; _cursorX = null; _cursorY = null; _crosshairTime = null;
-    _priceChart.draw(); _volChart?.draw();
+    _priceChart.draw();
   });
 }
 
 function resetZoom() {
-  [_priceChart, _volChart].forEach(c => {
-    if (!c) return;
-    c.options.scales.x.min = MARKET_START;
-    c.options.scales.x.max = MARKET_END;
-    c.options.scales.x.time.stepSize = tickStep((MARKET_END - MARKET_START) / 1000);
-    c.update();
-  });
-  fitBarThickness();
-  _volChart?.update();
+  if (!_priceChart) return;
+  _priceChart.options.scales.x.min = MARKET_START;
+  _priceChart.options.scales.x.max = MARKET_END;
+  _priceChart.options.scales.x.time.stepSize = tickStep((MARKET_END - MARKET_START) / 1000);
+  _priceChart.update();
 }
 
-function fitBarThickness() { /* no-op — bars rendered manually below */ }
-
 // ── Custom volume-bar renderer ─────────────────────────────────────────────
-// Chart.js's stacked-bar layout on a time scale was unreliable (overlap or
-// gaps depending on zoom). We draw bars directly: each bar is centred on
-// its 15s bucket timestamp and exactly one slot wide. Chart.js still owns
-// the axes, scales, zoom, tooltip, hit testing.
+// Bars rendered directly using yVolume scale on the same canvas as price.
 const volumeBarsPlugin = {
   id: 'volumeBars',
   beforeDatasetsDraw(chart) {
-    if (chart.canvas.id !== 'volumeChart') return;
-    const { ctx, chartArea: ca, scales: { x: xs, y: ys } } = chart;
-    const up   = chart.data.datasets[0]?.data || [];
-    const down = chart.data.datasets[1]?.data || [];
+    if (chart.canvas.id !== 'priceChart') return;
+    const xs = chart.scales.x;
+    const ys = chart.scales.yVolume;
+    if (!xs || !ys || !_volBars.length) return;
+    const ca = { left: ys.left + ys.width, right: chart.chartArea.right, top: ys.top, bottom: ys.bottom };
 
-    // Slot width in pixels = distance between two adjacent 15s ticks
     const slotPx = Math.abs(
       xs.getPixelForValue(MARKET_START + 15_000) - xs.getPixelForValue(MARKET_START)
     );
     if (!slotPx) return;
-    const barW = Math.max(1, slotPx - 1);  // 1px guarantee gap between bars
+    const barW = Math.max(1, slotPx - 1);
     const y0   = ys.getPixelForValue(0);
 
+    const { ctx } = chart;
     ctx.save();
     ctx.beginPath(); ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top); ctx.clip();
 
-    // Which bucket is the crosshair hovering, if any?
     const hoveredBucket = _crosshairTime != null
       ? Math.floor(_crosshairTime / 15_000) * 15_000 : null;
 
-    for (let i = 0; i < up.length; i++) {
-      const t = up[i].x;
-      const cx = xs.getPixelForValue(t);
+    for (const b of _volBars) {
+      const cx = xs.getPixelForValue(b.x);
       const left = cx - barW / 2;
       if (left + barW < ca.left || left > ca.right) continue;
+      if (b.up === 0 && b.down === 0) continue;
 
-      const upVal   = up[i].y   || 0;
-      const downVal = down[i].y || 0;
-      if (upVal === 0 && downVal === 0) continue;
-
-      const isHovered = (t === hoveredBucket);
+      const isHovered = (b.x === hoveredBucket);
       const upColor   = isHovered ? 'rgba(16,185,129,1)'  : 'rgba(16,185,129,0.85)';
       const downColor = isHovered ? 'rgba(239,68,68,1)'   : 'rgba(239,68,68,0.85)';
 
-      const yUp   = ys.getPixelForValue(upVal);
-      const yDown = ys.getPixelForValue(upVal + downVal);
+      const yUp   = ys.getPixelForValue(b.up);
+      const yDown = ys.getPixelForValue(b.up + b.down);
 
-      if (upVal > 0) {
-        ctx.fillStyle = upColor;
-        ctx.fillRect(left, yUp, barW, y0 - yUp);
-      }
-      if (downVal > 0) {
-        ctx.fillStyle = downColor;
-        ctx.fillRect(left, yDown, barW, yUp - yDown);
-      }
-      // Outline on the hovered bar so it pops out
-      if (isHovered && (upVal > 0 || downVal > 0)) {
-        ctx.strokeStyle = '#93c5fd';
-        ctx.lineWidth = 1;
+      if (b.up   > 0) { ctx.fillStyle = upColor;   ctx.fillRect(left, yUp,   barW, y0 - yUp); }
+      if (b.down > 0) { ctx.fillStyle = downColor; ctx.fillRect(left, yDown, barW, yUp - yDown); }
+
+      if (isHovered) {
+        ctx.strokeStyle = '#93c5fd'; ctx.lineWidth = 1;
         ctx.strokeRect(left + 0.5, yDown + 0.5, barW - 1, y0 - yDown - 1);
       }
     }
@@ -552,122 +561,8 @@ const volumeBarsPlugin = {
 };
 Chart.register(volumeBarsPlugin);
 
-// Sync volume chart x-axis to match price chart after zoom/pan
-function syncVolume() {
-  if (!_volChart || !_priceChart) return;
-  _volChart.options.scales.x.min = _priceChart.scales.x.min;
-  _volChart.options.scales.x.max = _priceChart.scales.x.max;
-  applyTickStep();
-  fitBarThickness();
-  _volChart.update();
-  _priceChart.update('none');
-}
-
-// ── Volume chart (synced panel below price) ───────────────────────────────
-function renderVolumeChart(volume, snaps) {
-  if (!snaps.length) return;
-
-  const BUCKET = 15_000; // 15 seconds in ms
-
-  // Map actual trade volume into buckets
-  const map = {};
-  volume.forEach(v => {
-    const ms = new Date(v.bucket).getTime();
-    if (!map[ms]) map[ms] = { up:0, down:0 };
-    if (v.outcome?.toLowerCase().includes('up')) map[ms].up   += v.volume;
-    else                                          map[ms].down += v.volume;
-  });
-
-  // Expose for the crosshair pill
-  _volBucketLookup = new Map(Object.entries(map).map(([k, v]) => [Number(k), v]));
-
-  // Generate EVERY 15-second bucket for the exact market window (gaps = 0)
-  // Evenly-spaced → each bar is exactly 15s wide, scales correctly on zoom
-  const firstBucket = Math.floor(MARKET_START / BUCKET) * BUCKET;
-  const allBuckets  = [];
-  for (let t = firstBucket; t <= MARKET_END; t += BUCKET) allBuckets.push(t);
-
-  const upData   = allBuckets.map(k => ({ x:k, y: map[k]?.up   || 0 }));
-  const downData = allBuckets.map(k => ({ x:k, y: map[k]?.down || 0 }));
-
-  _volChart = new Chart(document.getElementById('volumeChart'), {
-    type:'bar',
-    data: {
-      datasets: [
-        { label:'Up',   data: upData,   backgroundColor:'rgba(16,185,129,0.75)',
-          stack:'v', barPercentage:0.92, categoryPercentage:1.0,
-          backgroundColor: 'rgba(0,0,0,0)',  // transparent — drawn by volumeBarsPlugin
-          borderColor: 'rgba(0,0,0,0)' },
-        { label:'Down', data: downData, backgroundColor:'rgba(239,68,68,0.75)',
-          stack:'v', barPercentage:0.92, categoryPercentage:1.0,
-          backgroundColor: 'rgba(0,0,0,0)',  // transparent — drawn by volumeBarsPlugin
-          borderColor: 'rgba(0,0,0,0)' },
-      ]
-    },
-    options: {
-      responsive:true, maintainAspectRatio:false, animation:false,
-      // Reserve 26px below the chartArea for the volume pill (the crosshair
-      // plugin draws it at chartArea.bottom + 2..20).
-      layout: { padding:{ top:4, bottom:26, right: 8 } },
-      plugins: {
-        legend: { display:false },
-        // Disabled — the bottom pill already shows the bucket range and
-        // Up/Down/Σ totals, so the default tooltip was overlapping it.
-        tooltip: { enabled: false },
-        zoom: {
-          limits: ZOOM_LIMITS,
-          zoom: { wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x', onZoom: syncVolume },
-          pan:  { enabled:true, mode:'x', onPan: syncVolume },
-        },
-      },
-      scales: {
-        x: {
-          type:'time', stacked:true,
-          min: MARKET_START,
-          max: MARKET_END,
-          time:{ unit:'second', stepSize:30, displayFormats:{ second:'h:mm:ss' } },
-          grid: GRID,
-          // No tick labels at the bottom of the volume panel — time is already
-          // shown under the price panel; this row is reserved for the
-          // volume-at-cursor pill drawn by the crosshair plugin.
-          ticks: { display: false },
-        },
-        y: {
-          stacked:true, beginAtZero:true, grid:GRID,
-          ticks:{
-            color:'#64748b', maxTicksLimit:3,
-            // Compact format to match price chart label width: $500k not $500000
-            callback: v => v >= 1000 ? '$'+(v/1000).toFixed(0)+'k'
-                       : v >= 1     ? '$'+v.toFixed(0)
-                       : '$0',
-          },
-          afterFit(s) { s.width = 60; s.paddingTop = 0; s.paddingBottom = 0; },
-        },
-      }
-    }
-  });
-  // Set initial bar widths to exactly 15s after layout is computed
-  requestAnimationFrame(() => { fitBarThickness(); _volChart.update(); });
-
-  // Mouse tracking on volume chart — also updates the shared crosshair time
-  const volCanvas = document.getElementById('volumeChart');
-  let _rafVol = false;
-  volCanvas.addEventListener('mousemove', e => {
-    const rect = volCanvas.getBoundingClientRect();
-    const xPixel = e.clientX - rect.left;
-    _crosshairTime = _volChart.scales.x.getValueForPixel(xPixel);
-    _mouseOnPrice = false;   // horizontal line + price y-pill suppressed
-    _cursorY = null;
-    if (!_rafVol) {
-      _rafVol = true;
-      requestAnimationFrame(() => { _rafVol = false; _volChart.draw(); _priceChart?.draw(); });
-    }
-  });
-  volCanvas.addEventListener('mouseleave', () => {
-    _crosshairTime = null;
-    _volChart.draw(); _priceChart?.draw();
-  });
-}
+// renderVolumeChart removed — volume now lives on the same canvas as price
+// via the yVolume stacked y-axis and volumeBarsPlugin.
 
 // ── Order book depth chart ─────────────────────────────────────────────────
 function renderDepthChart(depth) {
