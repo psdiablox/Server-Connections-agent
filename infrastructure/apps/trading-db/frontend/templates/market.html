@@ -123,17 +123,20 @@
 const MID = {{ market.id }};
 const GRID = { color: 'rgba(51,65,85,0.6)' };
 
-// Convert header window to local time
+// Convert header window to ET (Polymarket) + local
 (function() {
+  const ET = 'America/New_York';
   const start = new Date("{{ market.start_ts }}");
   const end   = new Date("{{ market.end_ts }}");
-  const fmt   = d => d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
-  const utcS  = "{{ market.start_ts[11:16] }}";
-  const utcE  = "{{ market.end_ts[11:16] }}";
+  const fmtET    = d => d.toLocaleTimeString('en-US', { timeZone:ET, hour:'2-digit', minute:'2-digit' });
+  const fmtLocal = d => d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  const etStr    = `${fmtET(start)} – ${fmtET(end)} ET`;
+  const localStr = `${fmtLocal(start)} – ${fmtLocal(end)} local`;
   const el = document.getElementById('market-window-local');
-  if (el) el.innerHTML =
-    `<strong>${fmt(start)} – ${fmt(end)}</strong>` +
-    ` <span class="text-slate-500 text-xs">${utcS}–${utcE} UTC</span>`;
+  if (!el) return;
+  el.innerHTML = `<strong class="text-white">${etStr}</strong>` +
+    (fmtET(start) !== fmtLocal(start)
+      ? ` <span class="text-slate-500 text-xs ml-2">${localStr}</span>` : '');
 })();
 
 // ── Utilities ──────────────────────────────────────────────────────────────
@@ -255,10 +258,10 @@ function renderPriceChart(snaps, trades) {
           ticks: {
             color:'#64748b', maxTicksLimit:6,
             callback(value) {
-              const d = new Date(value);
-              const utc   = d.toISOString().slice(11,19) + ' UTC';
-              const local = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
-              return [utc, local];   // Chart.js renders array as two stacked lines
+              const d  = new Date(value);
+              const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+              const lo = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+              return et === lo ? [et + ' ET'] : [et + ' ET', lo + ' local'];
             }
           }
         },
@@ -332,10 +335,10 @@ function renderVolumeChart(volume, snaps) {
           ticks: {
             color:'#64748b', maxTicksLimit:6,
             callback(value) {
-              const d = new Date(value);
-              const utc   = d.toISOString().slice(11,16) + ' UTC';
-              const local = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
-              return [utc, local];
+              const d  = new Date(value);
+              const et = d.toLocaleTimeString('en-US', { timeZone:'America/New_York', hour:'2-digit', minute:'2-digit' });
+              const lo = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+              return et === lo ? [et + ' ET'] : [et + ' ET', lo + ' local'];
             }
           }
         },

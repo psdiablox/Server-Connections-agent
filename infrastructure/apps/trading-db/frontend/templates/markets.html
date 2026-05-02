@@ -4,7 +4,7 @@
 {% block content %}
 <div class="mb-8">
   <h1 class="text-2xl font-bold text-white mb-1">BTC 5-min Markets</h1>
-  <p class="text-slate-500 text-sm">All collected windows · newest first · times shown in your local timezone</p>
+  <p class="text-slate-500 text-sm">All collected windows · newest first · times in ET (Polymarket) then your local time</p>
 </div>
 
 <!-- Summary stats -->
@@ -28,7 +28,7 @@
   <table class="w-full text-sm">
     <thead>
       <tr class="border-b border-border text-slate-400 text-xs tracking-widest uppercase">
-        <th class="text-left px-5 py-3">Window (local)</th>
+        <th class="text-left px-5 py-3">Window</th>
         <th class="text-left px-5 py-3">Status</th>
         <th class="text-right px-5 py-3">Last Price</th>
         <th class="text-right px-5 py-3">Spread</th>
@@ -93,16 +93,18 @@
 </div>
 
 <script>
-// Convert UTC timestamps to local time on every row
+const ET  = 'America/New_York';
+const fmtET    = d => d.toLocaleTimeString('en-US', { timeZone:ET, hour:'2-digit', minute:'2-digit' });
+const fmtLocal = d => d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+
 document.querySelectorAll('.utc-window').forEach(el => {
   const start = new Date(el.dataset.start);
   const end   = new Date(el.dataset.end);
-  const fmt   = d => d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
-  const utcStart = el.dataset.start.slice(11,16);
-  const utcEnd   = el.dataset.end.slice(11,16);
-  el.innerHTML =
-    `<span class="font-semibold">${fmt(start)} – ${fmt(end)}</span>` +
-    `<span class="text-slate-500 text-xs ml-2">${utcStart}–${utcEnd} UTC</span>`;
+  const etStr    = `${fmtET(start)} – ${fmtET(end)}`;
+  const localStr = `${fmtLocal(start)} – ${fmtLocal(end)}`;
+  const localPart = etStr !== localStr
+    ? `<div class="text-slate-500 text-xs">${localStr} local</div>` : '';
+  el.innerHTML = `<div class="text-white font-semibold">${etStr} ET</div>${localPart}`;
 });
 </script>
 {% endblock %}
