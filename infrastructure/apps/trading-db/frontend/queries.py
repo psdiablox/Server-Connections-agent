@@ -46,6 +46,7 @@ async def get_markets() -> list[dict]:
         SELECT
             m.id, m.question, m.start_ts, m.end_ts,
             m.resolved, m.outcome, m.yes_outcome, m.no_outcome,
+            (m.end_ts < NOW()) AS window_ended,
             COUNT(t.id)::int          AS trade_count,
             COALESCE(SUM(t.size), 0)::float AS total_volume,
             l.price::float            AS last_price,
@@ -56,7 +57,7 @@ async def get_markets() -> list[dict]:
         LEFT JOIN latest l ON l.market_id = m.id
         GROUP BY m.id, m.question, m.start_ts, m.end_ts,
                  m.resolved, m.outcome, m.yes_outcome, m.no_outcome,
-                 l.price, l.best_bid, l.best_ask
+                 l.price, l.best_bid, l.best_ask, window_ended
         ORDER BY m.start_ts DESC
     """)
     return _fmt(rows)

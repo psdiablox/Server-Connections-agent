@@ -44,18 +44,18 @@
     <tr class="border-b border-border hover:bg-slate-700/30 transition cursor-pointer"
         onclick="location.href='/markets/{{ m.id }}'">
       <td class="px-5 py-4">
-        <div class="text-white font-medium">{{ m.start_ts[:16] | replace("T"," ") }}</div>
-        <div class="text-slate-500 text-xs">→ {{ m.end_ts[11:16] }} UTC</div>
+        <div class="text-white font-medium">{{ m.start_ts[11:16] }} – {{ m.end_ts[11:16] }} UTC</div>
+        <div class="text-slate-500 text-xs">{{ m.start_ts[:10] }}</div>
       </td>
       <td class="px-5 py-4">
-        {% if m.resolved %}
-          {% if m.outcome and 'up' in m.outcome|lower %}
+        {% if m.resolved and m.outcome %}
+          {% if 'up' in m.outcome|lower %}
             <span class="badge-up text-xs px-2 py-1 rounded font-bold">↑ UP</span>
-          {% elif m.outcome %}
-            <span class="badge-down text-xs px-2 py-1 rounded font-bold">↓ DOWN</span>
           {% else %}
-            <span class="text-slate-500 text-xs">Resolved</span>
+            <span class="badge-down text-xs px-2 py-1 rounded font-bold">↓ DOWN</span>
           {% endif %}
+        {% elif m.window_ended %}
+          <span class="text-slate-500 text-xs px-2 py-1 rounded border border-slate-700">Ended</span>
         {% else %}
           <span class="badge-live text-xs px-2 py-1 rounded font-bold animate-pulse">● LIVE</span>
         {% endif %}

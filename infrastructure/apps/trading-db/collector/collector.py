@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -40,8 +40,9 @@ def _parse_market_row(raw: dict) -> Optional[tuple]:
     try:
         token_ids = json.loads(clob_token_ids) if isinstance(clob_token_ids, str) else clob_token_ids
         outcomes  = json.loads(outcomes_raw)   if isinstance(outcomes_raw, str)  else outcomes_raw
-        start_ts  = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
         end_ts    = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+        # startDate from API is creation time, not window start — derive from end_ts
+        start_ts  = end_ts - timedelta(minutes=5)
     except Exception:
         return None
 
