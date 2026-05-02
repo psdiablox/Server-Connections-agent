@@ -203,31 +203,44 @@ _HANDLERS = {
 
 async def ws_loop(state: CollectorState) -> None:
     subscribed: set[str] = set()
+    IDLE_TIMEOUT = 90  # force reconnect if no msg received for this many seconds
 
     while True:
         try:
             async with websockets.connect(
                 config.CLOB_WS,
-                ping_interval=None,  # manual PING
+                # Protocol-level ping/pong — websockets library closes the
+                # connection if no PONG comes back within ping_timeout.
+                ping_interval=20,
+                ping_timeout=20,
                 open_timeout=15,
+                close_timeout=10,
             ) as ws:
                 log.info("websocket connected")
                 subscribed.clear()
-
-                # Subscribe to whatever markets are already known
                 await _subscribe_new(ws, state, subscribed)
 
                 ping_task = asyncio.create_task(
                     _ping_loop(ws, state, subscribed), name="ws-ping"
                 )
+
+                # Application-level idle watchdog: if we haven't received any
+                # message in IDLE_TIMEOUT seconds, the connection is a zombie
+                # (Polymarket has stopped pushing) — close to force reconnect.
                 try:
-                    async for raw in ws:
+                    while True:
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), timeout=IDLE_TIMEOUT)
+                        except asyncio.TimeoutError:
+                            log.warning("websocket idle %ds — forcing reconnect", IDLE_TIMEOUT)
+                            await ws.close()
+                            break
+
                         try:
                             payload = json.loads(raw)
                         except json.JSONDecodeError:
                             continue
 
-                        # WebSocket may send a single dict or a list of dicts
                         msgs = payload if isinstance(payload, list) else [payload]
                         for msg in msgs:
                             if not isinstance(msg, dict):
