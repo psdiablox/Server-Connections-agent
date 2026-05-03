@@ -32,6 +32,11 @@ from .health import Heartbeat, emit as emit_health
 
 SOURCE = "polymarket-clob"
 
+# Shared state used by the 1 Hz price emitter. Rebuilt at session start; written
+# by event handlers; read by hz_emitter().
+#   outcome_id -> {market_id, best_bid, best_ask, mid, last, last_event_ts}
+_latest_state: dict[int, dict] = {}
+
 log = logging.getLogger("trace.clob")
 
 SUBSCRIPTION_GRACE = timedelta(minutes=2)
@@ -100,16 +105,23 @@ async def _on_book(token_to_outcome: dict, msg: dict, stats: dict) -> None:
     asks = _normalize_levels(msg.get("asks"))
     h = msg.get("hash") or _hash_book(bids, asks)
     ts = _parse_ts(msg.get("timestamp"))
+    best_bid = max((p for p, _ in bids), default=None)
+    best_ask = min((p for p, _ in asks), default=None)
+    mid = (best_bid + best_ask) / 2 if best_bid is not None and best_ask is not None else None
 
+    # Update shared state so the 1 Hz emitter has fresh values to write.
+    prev = _latest_state.get(outcome_id, {})
+    _latest_state[outcome_id] = {
+        "market_id": market_id,
+        "best_bid": best_bid,
+        "best_ask": best_ask,
+        "mid": mid,
+        "last": prev.get("last"),
+        "last_event_ts": ts,
+    }
+
+    # Record every book — no dedup.
     async with pool().acquire() as conn:
-        prev = await conn.fetchval(
-            """SELECT hash FROM polymarket.book_snapshots
-               WHERE market_id=$1 AND outcome_id=$2 ORDER BY ts DESC LIMIT 1""",
-            market_id, outcome_id,
-        )
-        if prev == h:
-            stats["book_dedup"] += 1
-            return
         await conn.execute(
             """INSERT INTO polymarket.book_snapshots
                (market_id, outcome_id, ts, bids, asks, hash)
@@ -117,15 +129,6 @@ async def _on_book(token_to_outcome: dict, msg: dict, stats: dict) -> None:
             market_id, outcome_id, ts, bids, asks, h,
         )
         stats["book"] += 1
-        best_bid = max((p for p, _ in bids), default=None)
-        best_ask = min((p for p, _ in asks), default=None)
-        mid = (best_bid + best_ask) / 2 if best_bid is not None and best_ask is not None else None
-        await conn.execute(
-            """INSERT INTO polymarket.price_snapshots
-               (market_id, outcome_id, ts, best_bid, best_ask, mid, last)
-               VALUES ($1,$2,$3,$4,$5,$6,NULL)""",
-            market_id, outcome_id, ts, best_bid, best_ask, mid,
-        )
 
 
 async def _on_price_change(token_to_outcome: dict, msg: dict, stats: dict) -> None:
@@ -175,6 +178,12 @@ async def _on_last_trade(token_to_outcome: dict, msg: dict, stats: dict) -> None
         or msg.get("id")
         or f"{ts.isoformat()}-{price}-{size}"
     )
+
+    # Update shared state — last trade price for the 1 Hz emitter.
+    state = _latest_state.setdefault(outcome_id, {"market_id": market_id})
+    state["last"] = price
+    state["last_event_ts"] = ts
+
     async with pool().acquire() as conn:
         await conn.execute(
             """INSERT INTO polymarket.trades
@@ -184,22 +193,61 @@ async def _on_last_trade(token_to_outcome: dict, msg: dict, stats: dict) -> None
             market_id, outcome_id, ts, price, size, side,
             msg.get("transaction_hash"), str(external_id),
         )
-        await conn.execute(
-            """INSERT INTO polymarket.price_snapshots
-               (market_id, outcome_id, ts, best_bid, best_ask, mid, last)
-               VALUES ($1,$2,$3,NULL,NULL,NULL,$4)""",
-            market_id, outcome_id, ts, price,
-        )
         stats["trade"] += 1
+
+
+async def _hz_price_emitter(stop: asyncio.Event) -> None:
+    """Writes one price_snapshots row per active outcome every second using
+    whatever values are most recently in _latest_state. Guarantees a regular
+    1 Hz time grid for charting even when book/trade events are silent."""
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=1.0)
+            return
+        except asyncio.TimeoutError:
+            pass
+        if not _latest_state:
+            continue
+        now = datetime.now(tz=timezone.utc)
+        rows = [
+            (
+                s.get("market_id"),
+                oid,
+                now,
+                s.get("best_bid"),
+                s.get("best_ask"),
+                s.get("mid"),
+                s.get("last"),
+            )
+            for oid, s in list(_latest_state.items())
+            if s.get("market_id") is not None
+        ]
+        if not rows:
+            continue
+        try:
+            async with pool().acquire() as conn:
+                await conn.executemany(
+                    """INSERT INTO polymarket.price_snapshots
+                       (market_id, outcome_id, ts, best_bid, best_ask, mid, last)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7)
+                       ON CONFLICT DO NOTHING""",
+                    rows,
+                )
+        except Exception:
+            log.exception("hz emitter insert error")
 
 
 async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
     """Run one ws session. Returns reason for exit: 'idle' | 'deadline' | 'closed' | 'error'."""
     log.info("clob ws connecting (%d tokens)", len(token_ids))
-    stats = {"book": 0, "book_dedup": 0, "book_event": 0, "trade": 0}
+    stats = {"book": 0, "book_event": 0, "trade": 0}
     started = time.time()
     deadline = started + SESSION_MAX
     hb = Heartbeat(SOURCE)
+    # Reset shared state to only the outcomes this session is subscribed to.
+    _latest_state.clear()
+    hz_stop = asyncio.Event()
+    hz_task = asyncio.create_task(_hz_price_emitter(hz_stop), name="hz-price")
     try:
         async with websockets.connect(
             settings.polymarket_clob_ws,
@@ -249,6 +297,12 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
         log.exception("clob session crashed | %s", stats)
         await hb.stop(f"polymarket ws crashed: {type(e).__name__}: {e}")
         return "error"
+    finally:
+        hz_stop.set()
+        try:
+            await asyncio.wait_for(hz_task, timeout=2)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            hz_task.cancel()
     await hb.stop("polymarket ws closed by peer")
     log.info("clob session closed | %s", stats)
     return "closed"
