@@ -11,12 +11,14 @@ export function PolyAnalysis({
   window,
   onBack,
   onHome,
+  onNavigateToMarket,
 }: {
   network: Network;
   coin: Coin;
   window: WindowSummary;
   onBack: (where: "coins" | "windows") => void;
   onHome: () => void;
+  onNavigateToMarket?: (marketId: number) => void;
 }) {
   const [market, setMarket] = useState<Market | null>(null);
   const [ticks, setTicks] = useState<Tick[]>([]);
@@ -121,7 +123,21 @@ export function PolyAnalysis({
           <div className="pa-mark">
             <div className="poly-coin-glyph" style={{ borderColor: coin.color || undefined, color: coin.color || undefined, width: 56, height: 56, fontSize: 13 }}>{coin.symbol}</div>
             <div>
-              <h1 className="pa-q">{market?.question || `Will ${coin.symbol} close above $${fmt(window.strike, 0)}?`}</h1>
+              <h1 className="pa-q">
+                <button
+                  className="pa-nav"
+                  disabled={!market?.prev_market_id || !onNavigateToMarket}
+                  onClick={() => market?.prev_market_id && onNavigateToMarket?.(market.prev_market_id)}
+                  title="Previous 5-min window"
+                >‹</button>
+                <span className="pa-q-text">{market?.question || `Will ${coin.symbol} close above $${fmt(window.strike, 0)}?`}</span>
+                <button
+                  className="pa-nav"
+                  disabled={!market?.next_market_id || !onNavigateToMarket}
+                  onClick={() => market?.next_market_id && onNavigateToMarket?.(market.next_market_id)}
+                  title="Next 5-min window"
+                >›</button>
+              </h1>
               <div className="pa-meta mono">
                 <span className="dim">5 MIN WINDOW</span><span>·</span>
                 <span>{fmtWindowTime(window.starts_at, window.ends_at)} UTC</span><span>·</span>
@@ -267,7 +283,18 @@ export function PolyAnalysis({
         .pa-hero { display: flex; padding: 16px 24px; gap: 24px; border-bottom: 1px solid var(--line); background: var(--bg-1); flex-shrink: 0; align-items: stretch; }
         .pa-hero-left { flex: 1; min-width: 0; }
         .pa-mark { display: flex; gap: 16px; align-items: center; }
-        .pa-q { font-size: 22px; font-weight: 600; margin: 0 0 6px; letter-spacing: -0.01em; line-height: 1.25; }
+        .pa-q { font-size: 22px; font-weight: 600; margin: 0 0 6px; letter-spacing: -0.01em; line-height: 1.25; display: flex; align-items: center; gap: 10px; }
+        .pa-q-text { display: inline-block; }
+        .pa-nav {
+          width: 30px; height: 30px;
+          background: var(--bg-2); border: 1px solid var(--line-2);
+          color: var(--fg-0); font-size: 18px; line-height: 1;
+          font-family: var(--font-mono); cursor: pointer;
+          display: inline-flex; align-items: center; justify-content: center;
+          transition: background 80ms, border-color 80ms;
+        }
+        .pa-nav:hover:not(:disabled) { background: var(--bg-3); border-color: var(--line-3); }
+        .pa-nav:disabled { opacity: 0.3; cursor: not-allowed; }
         .pa-meta { display: flex; gap: 6px; font-size: 11px; align-items: center; flex-wrap: wrap; }
         .pa-meta .dim { color: var(--fg-3); }
         .pa-hero-stats { display: grid; grid-template-columns: repeat(10, minmax(70px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); flex-shrink: 0; }

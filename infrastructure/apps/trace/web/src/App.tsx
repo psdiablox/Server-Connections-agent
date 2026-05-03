@@ -141,7 +141,8 @@ function MarketRoute() {
       where === "coins"
         ? navigate(`/networks/${data.net.slug}`)
         : navigate(`/networks/${data.net.slug}/${data.coin.slug}`)
-    } />;
+    }
+    onNavigateToMarket={(mid) => navigate(`/markets/${mid}`)} />;
 }
 
 function NetworksRoute({ user, onLogout }: { user: string; onLogout: () => void }) {

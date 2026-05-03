@@ -64,6 +64,24 @@ def _outcome_id_by_label(outcomes: list[Outcome], label: str) -> Optional[int]:
 async def get_market(market_id: int) -> Market:
     m = await _load_market(market_id)
     outcomes = await _load_outcomes(market_id)
+    prev_id: Optional[int] = None
+    next_id: Optional[int] = None
+    if m["starts_at"] is not None and m["coin_id"] is not None and m["period_seconds"] is not None:
+        async with pool().acquire() as conn:
+            prev_id = await conn.fetchval(
+                """SELECT id FROM core.markets
+                   WHERE network_id = $1 AND coin_id = $2 AND period_seconds = $3
+                     AND starts_at < $4
+                   ORDER BY starts_at DESC LIMIT 1""",
+                m["network_id"], m["coin_id"], m["period_seconds"], m["starts_at"],
+            )
+            next_id = await conn.fetchval(
+                """SELECT id FROM core.markets
+                   WHERE network_id = $1 AND coin_id = $2 AND period_seconds = $3
+                     AND starts_at > $4
+                   ORDER BY starts_at ASC LIMIT 1""",
+                m["network_id"], m["coin_id"], m["period_seconds"], m["starts_at"],
+            )
     return Market(
         id=m["id"],
         network_slug=m["network_slug"],
@@ -83,6 +101,8 @@ async def get_market(market_id: int) -> Market:
         last_yes=float(m["last_yes"]) if m["last_yes"] is not None else None,
         last_no=float(m["last_no"]) if m["last_no"] is not None else None,
         outcomes=outcomes,
+        prev_market_id=prev_id,
+        next_market_id=next_id,
     )
 
 

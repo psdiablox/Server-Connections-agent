@@ -71,6 +71,8 @@ class Market(BaseModel):
     last_yes: Optional[float]
     last_no: Optional[float]
     outcomes: list[Outcome] = []
+    prev_market_id: Optional[int] = None
+    next_market_id: Optional[int] = None
 
 
 class WindowSummary(BaseModel):

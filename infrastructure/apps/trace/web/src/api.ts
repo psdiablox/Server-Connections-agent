@@ -57,6 +57,8 @@ export type Market = WindowSummary & {
   question: string | null;
   resolved_at: string | null;
   outcomes: Outcome[];
+  prev_market_id: number | null;
+  next_market_id: number | null;
 };
 
 export type Tick = { t: string; base_price: number | null; yes: number | null; no: number | null };
