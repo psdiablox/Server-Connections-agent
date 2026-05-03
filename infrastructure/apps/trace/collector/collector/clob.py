@@ -40,8 +40,15 @@ _latest_state: dict[int, dict] = {}
 log = logging.getLogger("trace.clob")
 
 SUBSCRIPTION_GRACE = timedelta(minutes=2)
-SESSION_MAX = 300       # cap a single ws session at 5 min, then refresh
-IDLE_MAX = 45           # if no message in 45s, force reconnect
+SESSION_MAX = 300                  # cap a single ws session at 5 min, then refresh
+IDLE_MAX = 45                      # if no message in 45s, force reconnect
+
+# Per-outcome resubscribe watchdog
+WATCHDOG_INTERVAL = 4.0            # how often the watchdog runs
+PEER_FRESH = 5.0                   # if any peer outcome had an event in last N s, WS is fine
+OUTCOME_SILENT = 10.0              # outcome silent for this long while peers fresh -> resubscribe
+RESUB_COOLDOWN = 20.0              # don't resub the same token more than every N s
+
 PING_INTERVAL = 20
 
 
@@ -199,6 +206,75 @@ async def _on_last_trade(token_to_outcome: dict, msg: dict, stats: dict) -> None
 FRESH_DATA_WINDOW = timedelta(seconds=15)
 
 
+async def _resubscribe_watchdog(
+    ws,
+    token_to_outcome: dict,
+    stop: asyncio.Event,
+    started_at: float,
+) -> None:
+    """Per-outcome silence detector. While the WS session is alive, every few
+    seconds we look at last_event_ts for each subscribed outcome:
+
+      - If an outcome has been silent for OUTCOME_SILENT seconds AND
+        at least one *other* subscribed outcome had an event in the last
+        PEER_FRESH seconds, the WS itself is healthy but Polymarket has
+        silently dropped this subscription. Resubscribe just those tokens
+        on the same connection.
+
+      - Cooldown per outcome to avoid spamming if Polymarket persistently
+        refuses to honour the sub.
+
+    The first START_GRACE seconds give Polymarket time to deliver initial
+    book snapshots before we start judging silence.
+    """
+    START_GRACE = 5.0
+    last_resub: dict[int, float] = {}
+
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=WATCHDOG_INTERVAL)
+            return
+        except asyncio.TimeoutError:
+            pass
+        if time.time() - started_at < START_GRACE:
+            continue
+
+        now_dt = datetime.now(tz=timezone.utc)
+        now_t = time.time()
+
+        # Is the WS itself producing data right now? Check across all known peers.
+        any_peer_fresh = any(
+            s.get("last_event_ts") is not None
+            and (now_dt - s["last_event_ts"]).total_seconds() < PEER_FRESH
+            for s in _latest_state.values()
+        )
+        if not any_peer_fresh:
+            continue  # WS-wide silence — IDLE_MAX handles a real outage
+
+        # Find stuck tokens to resubscribe.
+        stuck: list[tuple[str, int, float]] = []
+        for tok, (mid, oid) in token_to_outcome.items():
+            s = _latest_state.get(oid, {})
+            last = s.get("last_event_ts")
+            silent = (now_dt - last).total_seconds() if last is not None else None
+            # silent==None means we never received the initial book; that's
+            # also a sign of a non-honoured subscription (after grace).
+            if silent is None or silent > OUTCOME_SILENT:
+                if now_t - last_resub.get(oid, 0) > RESUB_COOLDOWN:
+                    stuck.append((tok, oid, silent or 999.0))
+
+        if not stuck:
+            continue
+        try:
+            payload = orjson.dumps({"type": "market", "assets_ids": [t for t, _, _ in stuck]}).decode()
+            await ws.send(payload)
+            for tok, oid, silent in stuck:
+                last_resub[oid] = now_t
+                log.warning("resubscribed outcome=%d after %.0fs silence (peers fresh)", oid, silent)
+        except Exception:
+            log.exception("watchdog resubscribe failed")
+
+
 async def _hz_price_emitter(stop: asyncio.Event) -> None:
     """Writes one price_snapshots row per active outcome every second — but
     ONLY for outcomes whose last book/trade event arrived within the last
@@ -257,6 +333,8 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
 
     result = "closed"
     hb_reason: Optional[str] = "polymarket ws closed by peer"
+    watchdog_stop = asyncio.Event()
+    watchdog_task: Optional[asyncio.Task] = None
 
     try:
         async with websockets.connect(
@@ -268,6 +346,10 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
         ) as ws:
             await ws.send(orjson.dumps({"type": "market", "assets_ids": token_ids}).decode())
             hb.start()
+            watchdog_task = asyncio.create_task(
+                _resubscribe_watchdog(ws, token_to_outcome, watchdog_stop, started),
+                name="resub-watchdog",
+            )
             last_msg = time.time()
             while True:
                 now = time.time()
@@ -310,6 +392,17 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
         result = "error"
         hb_reason = f"polymarket ws crashed: {type(e).__name__}: {e}"
     finally:
+        # Watchdog
+        watchdog_stop.set()
+        if watchdog_task is not None:
+            try:
+                await asyncio.wait_for(watchdog_task, timeout=2)
+            except asyncio.TimeoutError:
+                watchdog_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await watchdog_task
+            except Exception:
+                log.exception("watchdog cleanup error")
         # Tear down hz emitter — properly await even when cancelled.
         hz_stop.set()
         try:
