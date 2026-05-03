@@ -1,17 +1,22 @@
 """Polymarket BTC 5-min market discovery.
 
-The schedule is fixed: every 5 minutes starting at HH:00 UTC. We don't need
-to search broadly — for any boundary timestamp T we ask gamma for markets
-whose startDate matches T exactly, narrow the result to BTC + 5-min, and
-upsert the match.
+Polymarket runs recurring "Bitcoin Up or Down — <date>, HH:MMAM-HH:MMAM ET"
+markets. Each one resolves at a fixed top-of-5-minute boundary; trading opens
+~24 hours ahead. For TRACE we treat the 5-minute *resolution window* as the
+"window" — `starts_at = endDate - 5min`, `ends_at = endDate`.
+
+Strategy: every DISCOVERY_INTERVAL_SECONDS, ask gamma for active "Bitcoin Up
+or Down" markets (a small list — typically the next ~30 still open), filter
+to ones whose endDate sits on a 5-minute boundary, upsert.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, Optional
+from typing import Optional
 
 import aiohttp
 
@@ -20,108 +25,110 @@ from .db import pool
 
 log = logging.getLogger("trace.discovery")
 
-# How many upcoming windows to ensure are in the catalogue at any time.
-LOOKAHEAD = 6
-# How many recently-passed windows to backfill on startup.
-LOOKBEHIND = 2
+USER_AGENT = "trace-collector/0.1 (+https://data.pserenlo.com)"
+
+# Title regex: "Bitcoin Up or Down - <date>, <time>-<time> ET"
+TITLE_RE = re.compile(r"\bbitcoin\s+up\s+or\s+down\b", re.IGNORECASE)
 
 
-def boundaries(now: Optional[datetime] = None) -> list[datetime]:
-    now = (now or datetime.now(tz=timezone.utc)).replace(second=0, microsecond=0)
-    minute = now.minute - (now.minute % 5)
-    base = now.replace(minute=minute)
-    return [base + timedelta(minutes=5 * i) for i in range(-LOOKBEHIND, LOOKAHEAD + 1)]
-
-
-def _is_btc_5min(item: dict) -> bool:
-    """Heuristic: title mentions BTC/Bitcoin AND endDate - startDate ≈ 5 minutes."""
-    title = (item.get("question") or item.get("title") or "").lower()
-    if "btc" not in title and "bitcoin" not in title:
-        return False
+def _parse_iso(s: str) -> Optional[datetime]:
     try:
-        start = datetime.fromisoformat(item["startDate"].replace("Z", "+00:00"))
-        end = datetime.fromisoformat(item["endDate"].replace("Z", "+00:00"))
-    except (KeyError, ValueError):
-        return False
-    span = (end - start).total_seconds()
-    return abs(span - settings.btc_window_seconds) <= 5
+        # gamma returns "2026-05-04T15:55:00Z" or with microseconds
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _is_btc_5min(item: dict) -> tuple[bool, Optional[datetime], Optional[datetime]]:
+    """Return (matches, starts_at, ends_at) where the timestamps describe the
+    5-min resolution window — NOT the long trading window."""
+    title = item.get("question") or item.get("title") or ""
+    if not TITLE_RE.search(title):
+        return False, None, None
+    end = _parse_iso(item.get("endDate"))
+    if not end:
+        return False, None, None
+    # endDate must align to a 5-minute boundary.
+    if end.second != 0 or end.microsecond != 0 or (end.minute % 5) != 0:
+        return False, None, None
+    starts = end - timedelta(seconds=settings.btc_window_seconds)
+    return True, starts, end
 
 
 def _parse_outcomes(item: dict) -> list[tuple[str, str]]:
-    """Returns [(label, token_id), …]."""
     raw_outcomes = item.get("outcomes")
     raw_tokens = item.get("clobTokenIds")
     if isinstance(raw_outcomes, str):
-        raw_outcomes = json.loads(raw_outcomes)
+        try:
+            raw_outcomes = json.loads(raw_outcomes)
+        except json.JSONDecodeError:
+            raw_outcomes = None
     if isinstance(raw_tokens, str):
-        raw_tokens = json.loads(raw_tokens)
+        try:
+            raw_tokens = json.loads(raw_tokens)
+        except json.JSONDecodeError:
+            raw_tokens = None
     if not raw_outcomes or not raw_tokens:
         return []
     return list(zip(raw_outcomes, raw_tokens))
 
 
-async def _fetch_at_boundary(session: aiohttp.ClientSession, boundary: datetime) -> list[dict]:
-    iso = boundary.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    after = (boundary - timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
-    before = (boundary + timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+def _parse_strike(item: dict) -> Optional[float]:
+    for key in ("strikePrice", "strike", "marketResolutionThreshold"):
+        v = item.get(key)
+        if v is not None:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+    title = item.get("question") or item.get("title") or ""
+    m = re.search(r"\$\s*([\d,]+(?:\.\d+)?)", title)
+    if m:
+        try:
+            return float(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+    return None
+
+
+async def _fetch_active(session: aiohttp.ClientSession) -> list[dict]:
+    """Pull a chunk of currently-active markets, ordered newest-first by
+    startDate. The "Bitcoin Up or Down" series only ever has a few open at
+    once, so a small limit is fine."""
+    url = f"{settings.polymarket_gamma_url}/markets"
     params = {
-        "start_date_min": after,
-        "start_date_max": before,
         "active": "true",
         "closed": "false",
         "archived": "false",
-        "limit": 100,
+        "order": "startDate",
+        "ascending": "false",
+        "limit": 50,
     }
-    url = f"{settings.polymarket_gamma_url}/markets"
-    async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
         if resp.status != 200:
-            log.warning("gamma %s -> %s", iso, resp.status)
+            log.warning("gamma %s -> %s", url, resp.status)
             return []
         return await resp.json()
 
 
-async def _upsert_market(item: dict) -> Optional[int]:
-    """Insert/update one Polymarket market and its outcomes. Returns market_id."""
+async def _upsert_market(item: dict, starts_at: datetime, ends_at: datetime) -> Optional[int]:
     outcomes = _parse_outcomes(item)
     if len(outcomes) != 2:
         return None
-    try:
-        starts_at = datetime.fromisoformat(item["startDate"].replace("Z", "+00:00"))
-        ends_at = datetime.fromisoformat(item["endDate"].replace("Z", "+00:00"))
-    except (KeyError, ValueError):
-        return None
-
-    title = item.get("question") or item.get("title") or ""
-    # Strike: try meta fields, else parse from question ("close above $X")
-    strike = None
-    for key in ("strikePrice", "strike", "marketResolutionThreshold"):
-        if key in item and item[key] is not None:
-            try:
-                strike = float(item[key])
-                break
-            except (TypeError, ValueError):
-                pass
-    if strike is None:
-        import re
-        m = re.search(r"\$\s*([\d,]+(?:\.\d+)?)", title)
-        if m:
-            try:
-                strike = float(m.group(1).replace(",", ""))
-            except ValueError:
-                pass
-
     external_id = str(item.get("id") or item.get("conditionId") or item.get("slug") or "")
     if not external_id:
         return None
+    title = item.get("question") or item.get("title") or ""
+    strike = _parse_strike(item)
 
     async with pool().acquire() as conn:
         async with conn.transaction():
-            network_id = await conn.fetchval("SELECT id FROM core.networks WHERE slug = 'polymarket'")
-            coin_id = await conn.fetchval("SELECT id FROM core.coins WHERE slug = 'btc'")
+            network_id = await conn.fetchval("SELECT id FROM core.networks WHERE slug='polymarket'")
+            coin_id = await conn.fetchval("SELECT id FROM core.coins WHERE slug='btc'")
             if not network_id or not coin_id:
-                log.error("polymarket/btc rows missing in core; run seed migration")
+                log.error("polymarket/btc rows missing in core; check seed migration")
                 return None
-
             row = await conn.fetchrow(
                 """
                 INSERT INTO core.markets
@@ -135,20 +142,14 @@ async def _upsert_market(item: dict) -> Optional[int]:
                       ends_at = EXCLUDED.ends_at,
                       meta = core.markets.meta || EXCLUDED.meta,
                       updated_at = now()
-                RETURNING id
+                RETURNING (xmax = 0) AS inserted, id
                 """,
-                network_id,
-                coin_id,
-                external_id,
-                title,
-                settings.btc_window_seconds,
-                strike,
-                starts_at,
-                ends_at,
+                network_id, coin_id, external_id, title,
+                settings.btc_window_seconds, strike, starts_at, ends_at,
                 json.dumps({"slug": item.get("slug"), "conditionId": item.get("conditionId")}),
             )
+            inserted = row["inserted"]
             market_id = row["id"]
-
             for label, token_id in outcomes:
                 await conn.execute(
                     """
@@ -157,43 +158,29 @@ async def _upsert_market(item: dict) -> Optional[int]:
                     ON CONFLICT (market_id, label) DO UPDATE
                       SET external_token_id = EXCLUDED.external_token_id
                     """,
-                    market_id,
-                    label.upper(),
-                    str(token_id),
+                    market_id, label.upper(), str(token_id),
                 )
-    return market_id
+    return market_id if inserted else None
 
 
 async def discovery_loop(market_signal: asyncio.Event) -> None:
-    """Every DISCOVERY_INTERVAL, ensure each scheduled boundary has a row."""
+    log.info("discovery loop starting (interval=%ds)", settings.discovery_interval_seconds)
     async with aiohttp.ClientSession() as session:
         while True:
             try:
+                items = await _fetch_active(session)
+                matches = 0
                 added = 0
-                for b in boundaries():
-                    async with pool().acquire() as conn:
-                        existing = await conn.fetchval(
-                            """
-                            SELECT 1 FROM core.markets m
-                            JOIN core.networks n ON n.id = m.network_id
-                            JOIN core.coins c ON c.id = m.coin_id
-                            WHERE n.slug='polymarket' AND c.slug='btc'
-                              AND m.period_seconds=$1 AND m.starts_at=$2
-                            """,
-                            settings.btc_window_seconds,
-                            b,
-                        )
-                    if existing:
+                for it in items:
+                    ok, starts_at, ends_at = _is_btc_5min(it)
+                    if not ok or starts_at is None or ends_at is None:
                         continue
-                    items = await _fetch_at_boundary(session, b)
-                    for it in items:
-                        if not _is_btc_5min(it):
-                            continue
-                        mid = await _upsert_market(it)
-                        if mid:
-                            log.info("discovered market %s @ %s", mid, b.isoformat())
-                            added += 1
-                            break  # one per boundary
+                    matches += 1
+                    new_id = await _upsert_market(it, starts_at, ends_at)
+                    if new_id:
+                        log.info("discovered market %s | %s -> %s", new_id, starts_at.isoformat(), ends_at.isoformat())
+                        added += 1
+                log.debug("discovery cycle: %d items, %d matched, %d new", len(items), matches, added)
                 if added:
                     market_signal.set()
             except Exception:
