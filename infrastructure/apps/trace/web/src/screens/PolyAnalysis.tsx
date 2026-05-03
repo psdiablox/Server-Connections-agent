@@ -48,6 +48,15 @@ export function PolyAnalysis({
   const hmAnyOn = layers.hmYesBuy || layers.hmYesSell || layers.hmNoBuy || layers.hmNoSell;
   const hmOnCount = [layers.hmYesBuy, layers.hmYesSell, layers.hmNoBuy, layers.hmNoSell].filter(Boolean).length;
 
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const downloadAll = () => {
+    [`/api/markets/${window.id}/export/trades`,
+     `/api/markets/${window.id}/export/book-snapshots`,
+     `/api/markets/${window.id}/export/price-snapshots`]
+      .forEach((url, i) => setTimeout(() => triggerDownload(url), i * 250));
+    setDownloadOpen(false);
+  };
+
   // Zoom: visible window range as fraction of full [0..1].
   const [zoom, setZoom] = useState<{ a: number; b: number }>({ a: 0, b: 1 });
   const zoomIn = () => setZoom((z) => {
@@ -137,6 +146,40 @@ export function PolyAnalysis({
                   onClick={() => market?.next_market_id && onNavigateToMarket?.(market.next_market_id)}
                   title="Next 5-min window"
                 >›</button>
+
+                {/* Download menu */}
+                <div className="dl-wrap">
+                  <button
+                    className="btn ghost sm dl-trigger"
+                    onClick={() => setDownloadOpen((o) => !o)}
+                    title="Download CSV exports for this 5-min window"
+                  >
+                    ↓ EXPORT <span className="caret">{downloadOpen ? "▴" : "▾"}</span>
+                  </button>
+                  {downloadOpen && (
+                    <div className="dl-menu">
+                      <div className="dl-head mono">DOWNLOAD CSV</div>
+                      <a className="dl-item" href={`/api/markets/${window.id}/export/trades`}
+                         onClick={() => setDownloadOpen(false)}>
+                        <span className="mono">TRADES</span>
+                        <span className="dim mono">all fills · ts, side, price, size, $, tx</span>
+                      </a>
+                      <a className="dl-item" href={`/api/markets/${window.id}/export/book-snapshots`}
+                         onClick={() => setDownloadOpen(false)}>
+                        <span className="mono">BOOK SNAPSHOTS</span>
+                        <span className="dim mono">L2 expanded · ts, outcome, side, price, size</span>
+                      </a>
+                      <a className="dl-item" href={`/api/markets/${window.id}/export/price-snapshots`}
+                         onClick={() => setDownloadOpen(false)}>
+                        <span className="mono">PRICE SNAPSHOTS</span>
+                        <span className="dim mono">1 Hz · best_bid, best_ask, mid, last</span>
+                      </a>
+                      <button className="dl-item dl-all mono" onClick={downloadAll}>
+                        ↓ ALL THREE
+                      </button>
+                    </div>
+                  )}
+                </div>
               </h1>
               <div className="pa-meta mono">
                 <span className="dim">5 MIN WINDOW</span><span>·</span>
@@ -295,6 +338,28 @@ export function PolyAnalysis({
         }
         .pa-nav:hover:not(:disabled) { background: var(--bg-3); border-color: var(--line-3); }
         .pa-nav:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        .dl-wrap { position: relative; margin-left: 8px; font-size: 11px; font-weight: 500; letter-spacing: 0.04em; }
+        .dl-trigger { font-family: var(--font-mono); }
+        .dl-menu {
+          position: absolute; top: calc(100% + 6px); left: 0;
+          background: var(--bg-1); border: 1px solid var(--line-2);
+          padding: 4px; min-width: 320px; z-index: 50;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+          font-weight: 400; letter-spacing: normal;
+        }
+        .dl-head { padding: 6px 10px 8px; font-size: 9px; color: var(--fg-3); letter-spacing: 0.12em; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+        .dl-item {
+          display: flex; flex-direction: column; gap: 2px;
+          padding: 8px 10px; cursor: pointer; user-select: none;
+          background: transparent; border: none; color: var(--fg-0);
+          text-decoration: none; text-align: left;
+          font-family: var(--font-mono); font-size: 11px;
+          transition: background 100ms;
+        }
+        .dl-item:hover { background: var(--bg-2); }
+        .dl-item .dim { font-size: 10px; color: var(--fg-3); letter-spacing: 0.02em; }
+        .dl-all { border-top: 1px solid var(--line); margin-top: 4px; color: var(--accent); }
         .pa-meta { display: flex; gap: 6px; font-size: 11px; align-items: center; flex-wrap: wrap; }
         .pa-meta .dim { color: var(--fg-3); }
         .pa-hero-stats { display: grid; grid-template-columns: repeat(10, minmax(70px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); flex-shrink: 0; }
@@ -359,6 +424,15 @@ function Stat({ label, v, dir }: { label: string; v: string; dir?: string }) {
       <div className="v">{v}</div>
     </div>
   );
+}
+
+function triggerDownload(url: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 function Toggle({ on, onClick, color, label }: { on: boolean; onClick: () => void; color: string; label: string }) {

@@ -1,7 +1,9 @@
+import csv
+import io
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from ..auth import require_user
 from ..db import pool
@@ -569,3 +571,149 @@ async def get_order_stats(market_id: int) -> OrderStats:
         largest_trade=biggest or None,
         avg_trade=(total_size / total_count) if total_count else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# CSV exports — one file per kind, scoped to the market's resolution window.
+# Cookies authenticate (the router-level dependency above), browser saves the
+# file via Content-Disposition.
+# ---------------------------------------------------------------------------
+
+def _export_filename(network_slug: str, coin_slug: Optional[str], starts_at: datetime, ends_at: datetime, kind: str) -> str:
+    s = starts_at.astimezone(timezone.utc)
+    e = ends_at.astimezone(timezone.utc)
+    parts = [
+        network_slug or "network",
+        coin_slug or "coin",
+        s.strftime("%Y-%m-%d"),
+        s.strftime("%H-%M"),
+        e.strftime("%H-%M"),
+        "UTC",
+        kind,
+    ]
+    return "_".join(parts) + ".csv"
+
+
+def _csv_response(rows: list[list], header: list[str], filename: str) -> Response:
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(header)
+    writer.writerows(rows)
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/markets/{market_id}/export/trades")
+async def export_trades(market_id: int) -> Response:
+    """Every fill in the market's resolution window, one row per trade."""
+    m = await _load_market(market_id)
+    outcomes = await _load_outcomes(market_id)
+    label_by_id = {o.id: o.label for o in outcomes}
+    starts_at, ends_at = m["starts_at"], m["ends_at"]
+    if starts_at is None or ends_at is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "market has no window")
+
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT ts, outcome_id, side, price, size,
+                      taker_address, maker_address, tx_hash, external_id
+               FROM polymarket.trades
+               WHERE market_id = $1 AND ts >= $2 AND ts <= $3
+               ORDER BY ts""",
+            market_id, starts_at, ends_at,
+        )
+    out = []
+    for r in rows:
+        price = float(r["price"]); size = float(r["size"])
+        out.append([
+            r["ts"].astimezone(timezone.utc).isoformat(),
+            label_by_id.get(r["outcome_id"], ""),
+            r["side"],
+            price,
+            size,
+            price * size,
+            r["taker_address"] or "",
+            r["maker_address"] or "",
+            r["tx_hash"] or "",
+            r["external_id"] or "",
+        ])
+    header = ["ts_utc", "outcome", "side", "price", "size", "value_usd",
+              "taker_address", "maker_address", "tx_hash", "external_id"]
+    return _csv_response(out, header,
+                         _export_filename(m["network_slug"], m["coin_slug"], starts_at, ends_at, "trades"))
+
+
+@router.get("/markets/{market_id}/export/book-snapshots")
+async def export_book_snapshots(market_id: int) -> Response:
+    """Every L2 order-book snapshot, expanded to one row per (snap, side, level)."""
+    m = await _load_market(market_id)
+    outcomes = await _load_outcomes(market_id)
+    label_by_id = {o.id: o.label for o in outcomes}
+    starts_at, ends_at = m["starts_at"], m["ends_at"]
+    if starts_at is None or ends_at is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "market has no window")
+
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT ts, outcome_id, bids, asks, hash
+               FROM polymarket.book_snapshots
+               WHERE market_id = $1 AND ts >= $2 AND ts <= $3
+               ORDER BY ts, outcome_id""",
+            market_id, starts_at, ends_at,
+        )
+    out = []
+    for r in rows:
+        ts_iso = r["ts"].astimezone(timezone.utc).isoformat()
+        outcome = label_by_id.get(r["outcome_id"], "")
+        snap_hash = r["hash"] or ""
+        for entry in r["bids"] or []:
+            try:
+                price = float(entry[0]); size = float(entry[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            out.append([ts_iso, outcome, "bid", price, size, snap_hash])
+        for entry in r["asks"] or []:
+            try:
+                price = float(entry[0]); size = float(entry[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            out.append([ts_iso, outcome, "ask", price, size, snap_hash])
+    header = ["ts_utc", "outcome", "side", "price", "size", "snapshot_hash"]
+    return _csv_response(out, header,
+                         _export_filename(m["network_slug"], m["coin_slug"], starts_at, ends_at, "book-snapshots"))
+
+
+@router.get("/markets/{market_id}/export/price-snapshots")
+async def export_price_snapshots(market_id: int) -> Response:
+    """1 Hz price snapshots (best_bid, best_ask, mid, last) per outcome."""
+    m = await _load_market(market_id)
+    outcomes = await _load_outcomes(market_id)
+    label_by_id = {o.id: o.label for o in outcomes}
+    starts_at, ends_at = m["starts_at"], m["ends_at"]
+    if starts_at is None or ends_at is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "market has no window")
+
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT ts, outcome_id, best_bid, best_ask, mid, last
+               FROM polymarket.price_snapshots
+               WHERE market_id = $1 AND ts >= $2 AND ts <= $3
+               ORDER BY ts, outcome_id""",
+            market_id, starts_at, ends_at,
+        )
+    out = []
+    for r in rows:
+        out.append([
+            r["ts"].astimezone(timezone.utc).isoformat(),
+            label_by_id.get(r["outcome_id"], ""),
+            float(r["best_bid"]) if r["best_bid"] is not None else "",
+            float(r["best_ask"]) if r["best_ask"] is not None else "",
+            float(r["mid"]) if r["mid"] is not None else "",
+            float(r["last"]) if r["last"] is not None else "",
+        ])
+    header = ["ts_utc", "outcome", "best_bid", "best_ask", "mid", "last_trade_price"]
+    return _csv_response(out, header,
+                         _export_filename(m["network_slug"], m["coin_slug"], starts_at, ends_at, "price-snapshots"))
