@@ -109,16 +109,17 @@ export function PolyWindows({
 
       <div className="pw-table-wrap">
         <div className="pw-table-head mono">
-          <SortHead label="STATUS"     k="status"  sort={sort} dir={dir} onClick={onHeader} />
-          <SortHead label="WINDOW (ET)" k="time"    sort={sort} dir={dir} onClick={onHeader} />
-          <SortHead label="LOCAL"      k="time"    sort={sort} dir={dir} onClick={onHeader} />
-          <SortHead label="STRIKE"     k="strike"  sort={sort} dir={dir} onClick={onHeader} num />
-          <SortHead label="BTC CLOSE"  k="close"   sort={sort} dir={dir} onClick={onHeader} num />
-          <SortHead label="VOLUME"     k="vol"     sort={sort} dir={dir} onClick={onHeader} num />
-          <SortHead label="TRADES"     k="trades"  sort={sort} dir={dir} onClick={onHeader} num />
-          <SortHead label="LARGEST"    k="largest" sort={sort} dir={dir} onClick={onHeader} num />
-          <SortHead label="AVG"        k="avg"     sort={sort} dir={dir} onClick={onHeader} num />
-          <SortHead label="RESULT"     k="result"  sort={sort} dir={dir} onClick={onHeader} />
+          <SortHead label="STATUS"     k="status"   sort={sort} dir={dir} onClick={onHeader} />
+          <SortHead label="WINDOW (ET)" k="time"     sort={sort} dir={dir} onClick={onHeader} />
+          <SortHead label="LOCAL"      k="time"     sort={sort} dir={dir} onClick={onHeader} />
+          <SortHead label="STRIKE"     k="strike"   sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="BTC CLOSE"  k="close"    sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="VOLUME"     k="vol"      sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="TRADES"     k="trades"   sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="LARGEST"    k="largest"  sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="AVG"        k="avg"      sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="DATA"       k="coverage" sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="RESULT"     k="result"   sort={sort} dir={dir} onClick={onHeader} />
           <div></div>
         </div>
         <div className="pw-table-body">
@@ -149,7 +150,7 @@ export function PolyWindows({
         .pw-table-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 16px 32px; background: var(--bg-0); overflow: hidden; }
         .pw-table-head, .pw-row {
           display: grid;
-          grid-template-columns: 80px 200px 170px 90px 90px 90px 60px 80px 80px 90px 30px;
+          grid-template-columns: 80px 200px 170px 90px 90px 80px 60px 80px 70px 70px 80px 30px;
           align-items: center; gap: 12px; padding: 0 14px;
         }
         .pw-table-head { height: 32px; font-size: 9px; color: var(--fg-3); border-bottom: 1px solid var(--line); background: var(--bg-1); }
@@ -182,6 +183,7 @@ export function PolyWindows({
         .pw-res.pending { color: var(--fg-3); }
         .pw-yes { color: #22c55e; }
         .pw-no { color: #ef4444; }
+        .pw-warn { color: #f59e0b; }
         @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
       `}</style>
     </>
@@ -244,6 +246,9 @@ function WindowRow({ w, onPick }: { w: WindowSummary; onPick: (w: WindowSummary)
       <div className="num">{w.trade_count != null ? w.trade_count.toLocaleString() : "—"}</div>
       <div className="num">{w.largest_trade != null ? "$" + fmtCompact(w.largest_trade) : "—"}</div>
       <div className="num">{w.avg_trade != null ? "$" + fmt(w.avg_trade, 2) : "—"}</div>
+      <div className={"num " + (w.data_coverage_pct == null ? "" : w.data_coverage_pct >= 99.5 ? "pw-yes" : w.data_coverage_pct >= 90 ? "pw-warn" : "pw-no")}>
+        {w.data_coverage_pct != null ? w.data_coverage_pct.toFixed(1) + "%" : "—"}
+      </div>
       <div>
         {result
           ? <span className={`pw-res ${result.toLowerCase()}`}>{result}</span>

@@ -92,6 +92,7 @@ class WindowSummary(BaseModel):
     largest_trade: Optional[float] = None
     avg_trade: Optional[float] = None
     close_btc: Optional[float] = None
+    data_coverage_pct: Optional[float] = None
 
 
 class WindowList(BaseModel):

@@ -40,6 +40,7 @@ export type WindowSummary = {
   largest_trade: number | null;
   avg_trade: number | null;
   close_btc: number | null;
+  data_coverage_pct: number | null;
 };
 
 export type WindowList = {

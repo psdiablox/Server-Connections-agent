@@ -119,6 +119,7 @@ function MarketRoute() {
           total_volume: m.total_volume, traders: m.traders,
           last_yes: m.last_yes, last_no: m.last_no,
           trade_count: null, largest_trade: null, avg_trade: null, close_btc: null,
+          data_coverage_pct: null,
         };
         setData({ net, coin, window });
       })

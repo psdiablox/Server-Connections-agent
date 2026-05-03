@@ -127,17 +127,31 @@ async def _update_aggregates() -> None:
                 coin_id, window_end,
             ) if coin_id else None
 
+            # Data-coverage %: distinct seconds in [starts_at, ends_at) that
+            # have at least one price_snapshot row, divided by the window's
+            # total seconds. 100% = unbroken; lower = gaps from collector
+            # silence or late subscribe.
+            window_seconds = max(1, int((window_end - window_start).total_seconds()))
+            covered_seconds = await conn.fetchval(
+                """SELECT count(DISTINCT date_trunc('second', ts))
+                   FROM polymarket.price_snapshots
+                   WHERE market_id = $1 AND ts >= $2 AND ts < $3""",
+                mid, window_start, window_end,
+            ) or 0
+            coverage_pct = min(100.0, (covered_seconds / window_seconds) * 100.0)
+
             await conn.execute(
                 """
                 UPDATE core.markets
-                SET total_volume   = $2,
-                    traders        = $3,
-                    last_yes       = $4,
-                    last_no        = $5,
-                    trade_count    = $6,
-                    largest_trade  = $7,
-                    avg_trade      = $8,
-                    close_btc      = $9
+                SET total_volume      = $2,
+                    traders           = $3,
+                    last_yes          = $4,
+                    last_no           = $5,
+                    trade_count       = $6,
+                    largest_trade     = $7,
+                    avg_trade         = $8,
+                    close_btc         = $9,
+                    data_coverage_pct = $10
                 WHERE id = $1
                 """,
                 mid,
@@ -149,6 +163,7 @@ async def _update_aggregates() -> None:
                 float(stats["largest"]) if stats["largest"] is not None else None,
                 float(stats["avg_size"]) if stats["avg_size"] is not None else None,
                 float(close_btc) if close_btc is not None else None,
+                coverage_pct,
             )
 
 

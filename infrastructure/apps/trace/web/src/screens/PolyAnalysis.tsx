@@ -78,7 +78,7 @@ export function PolyAnalysis({
     Promise.all([
       api.market(window.id),
       api.ticks(window.id, 5),
-      api.trades(window.id, 2000),
+      api.trades(window.id, 50000),
       api.heatmap(window.id, 80, 80).catch(() => null),
       api.orderStats(window.id),
       api.outages(window.id).catch(() => []),
@@ -307,7 +307,7 @@ export function PolyAnalysis({
             height={560}
           />
           <div className="pa-trades-strip">
-            <TradesTable trades={trades} />
+            <TradesTable trades={trades} totalCount={market?.trade_count ?? null} />
           </div>
         </div>
         <div className="anal-rail">

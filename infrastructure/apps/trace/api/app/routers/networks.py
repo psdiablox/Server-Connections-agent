@@ -144,6 +144,7 @@ async def list_windows(
         "close": "m.close_btc",
         "status": "m.status",
         "result": "m.last_yes",
+        "coverage": "m.data_coverage_pct",
     }
     column = sort_columns.get(sort, "m.starts_at")
     dir_sql = "ASC" if direction.lower() == "asc" else "DESC"
@@ -163,7 +164,7 @@ async def list_windows(
             SELECT m.id, m.external_id, m.starts_at, m.ends_at, m.period_seconds,
                    m.strike, m.status, m.resolution, m.total_volume, m.traders,
                    m.last_yes, m.last_no, m.trade_count, m.largest_trade,
-                   m.avg_trade, m.close_btc
+                   m.avg_trade, m.close_btc, m.data_coverage_pct
             FROM core.markets m
             JOIN core.networks n ON n.id = m.network_id
             JOIN core.coins c ON c.id = m.coin_id
@@ -211,6 +212,7 @@ async def list_windows(
             largest_trade=float(r["largest_trade"]) if r["largest_trade"] is not None else None,
             avg_trade=float(r["avg_trade"]) if r["avg_trade"] is not None else None,
             close_btc=float(r["close_btc"]) if r["close_btc"] is not None else None,
+            data_coverage_pct=float(r["data_coverage_pct"]) if r["data_coverage_pct"] is not None else None,
         )
         for r in rows
     ]

@@ -13,7 +13,7 @@ const COLS: { key: SortKey; label: string; num?: boolean; flex?: number }[] = [
   { key: "size", label: "SIZE", num: true },
 ];
 
-export function TradesTable({ trades }: { trades: Trade[] }) {
+export function TradesTable({ trades, totalCount }: { trades: Trade[]; totalCount?: number | null }) {
   const [sort, setSort] = useState<SortKey>("time");
   const [dir, setDir] = useState<Dir>("desc");
 
@@ -46,7 +46,14 @@ export function TradesTable({ trades }: { trades: Trade[] }) {
   return (
     <div className="panel" style={{ height: "100%" }}>
       <div className="panel-head">
-        <span className="title">TRADES · {trades.length.toLocaleString()}</span>
+        <span className="title">
+          TRADES · {(totalCount ?? trades.length).toLocaleString()}
+          {totalCount != null && totalCount !== trades.length && (
+            <span className="dim mono" style={{ marginLeft: 8, fontSize: 10 }}>
+              ({trades.length.toLocaleString()} loaded)
+            </span>
+          )}
+        </span>
         <span className="dim mono" style={{ marginLeft: "auto", fontSize: 10 }}>click a header to sort</span>
       </div>
       <div className="panel-body">
