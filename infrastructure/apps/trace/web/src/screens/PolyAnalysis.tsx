@@ -52,7 +52,8 @@ export function PolyAnalysis({
   const downloadAll = () => {
     [`/api/markets/${window.id}/export/trades`,
      `/api/markets/${window.id}/export/book-snapshots`,
-     `/api/markets/${window.id}/export/price-snapshots`]
+     `/api/markets/${window.id}/export/price-snapshots`,
+     `/api/markets/${window.id}/export/gaps`]
       .forEach((url, i) => setTimeout(() => triggerDownload(url), i * 250));
     setDownloadOpen(false);
   };
@@ -172,10 +173,15 @@ export function PolyAnalysis({
                       <a className="dl-item" href={`/api/markets/${window.id}/export/price-snapshots`}
                          onClick={() => setDownloadOpen(false)}>
                         <span className="mono">PRICE SNAPSHOTS</span>
-                        <span className="dim mono">1 Hz · best_bid, best_ask, mid, last</span>
+                        <span className="dim mono">1 row per second of window · data_present flag for gaps</span>
+                      </a>
+                      <a className="dl-item" href={`/api/markets/${window.id}/export/gaps`}
+                         onClick={() => setDownloadOpen(false)}>
+                        <span className="mono">GAPS</span>
+                        <span className="dim mono">every detected outage · start, end, duration, reason</span>
                       </a>
                       <button className="dl-item dl-all mono" onClick={downloadAll}>
-                        ↓ ALL THREE
+                        ↓ ALL FOUR
                       </button>
                     </div>
                   )}

@@ -254,14 +254,24 @@ export function AnalysisChart({
   const svgRef = useRef<SVGSVGElement>(null);
 
   const visibleOutages = useMemo(() => {
+    // Minimum 3 px wide so a tiny 2-3 second gap is still seen on the chart.
+    const MIN_PX = 3;
     return outages
       .map((o) => {
         const s = new Date(o.start).getTime();
         const e = new Date(o.end).getTime();
-        const x1 = x(Math.max(s, t0));
-        const x2 = x(Math.min(e, t1));
-        if (x2 <= M.left || x1 >= M.left + innerW || x2 - x1 < 0.5) return null;
-        return { o, x1: Math.max(M.left, x1), x2: Math.min(M.left + innerW, x2) };
+        if (e <= t0 || s >= t1) return null;
+        let x1 = x(Math.max(s, t0));
+        let x2 = x(Math.min(e, t1));
+        if (x2 - x1 < MIN_PX) {
+          const center = (x1 + x2) / 2;
+          x1 = center - MIN_PX / 2;
+          x2 = center + MIN_PX / 2;
+        }
+        x1 = Math.max(M.left, x1);
+        x2 = Math.min(M.left + innerW, x2);
+        if (x2 <= x1) return null;
+        return { o, x1, x2 };
       })
       .filter((v): v is NonNullable<typeof v> => v !== null);
   }, [outages, t0, t1, innerW]);

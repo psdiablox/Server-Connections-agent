@@ -476,7 +476,9 @@ async def get_outages(market_id: int) -> list[Outage]:
                ORDER BY ts""",
             market_id, starts_at, ends_at,
         )
-        MARKET_GAP = 5
+        # 2 s threshold: 1 Hz emitter writes once per second, so any gap >2 s
+        # means we missed at least one full second of data.
+        MARKET_GAP = 2
         if not snap_rows:
             outages.append(Outage(
                 source="market-data",
@@ -686,9 +688,37 @@ async def export_book_snapshots(market_id: int) -> Response:
                          _export_filename(m["network_slug"], m["coin_slug"], starts_at, ends_at, "book-snapshots"))
 
 
+@router.get("/markets/{market_id}/export/gaps")
+async def export_gaps(market_id: int) -> Response:
+    """All detected data gaps in this market's window — one row per gap.
+    Sources: 'market-data' (per-market price-snapshot gap > 2 s) plus any
+    source-level heartbeat outage that overlaps the window."""
+    m = await _load_market(market_id)
+    starts_at, ends_at = m["starts_at"], m["ends_at"]
+    if starts_at is None or ends_at is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "market has no window")
+    # Reuse the same outage logic as the chart by calling get_outages.
+    outages = await get_outages(market_id)
+    out = []
+    for o in outages:
+        out.append([
+            o.start.astimezone(timezone.utc).isoformat(),
+            o.end.astimezone(timezone.utc).isoformat(),
+            f"{o.duration_seconds:.3f}",
+            o.source,
+            o.reason or "",
+        ])
+    header = ["gap_start_utc", "gap_end_utc", "duration_seconds", "source", "reason"]
+    return _csv_response(out, header,
+                         _export_filename(m["network_slug"], m["coin_slug"], starts_at, ends_at, "gaps"))
+
+
 @router.get("/markets/{market_id}/export/price-snapshots")
 async def export_price_snapshots(market_id: int) -> Response:
-    """1 Hz price snapshots (best_bid, best_ask, mid, last) per outcome."""
+    """1 Hz price snapshots — but emitted as one row per (second, outcome)
+    of the window, with data_present=false for any second we never received
+    data for. Filtering data_present=false in the CSV gives you the exact
+    seconds that were missing."""
     m = await _load_market(market_id)
     outcomes = await _load_outcomes(market_id)
     label_by_id = {o.id: o.label for o in outcomes}
@@ -698,22 +728,46 @@ async def export_price_snapshots(market_id: int) -> Response:
 
     async with pool().acquire() as conn:
         rows = await conn.fetch(
-            """SELECT ts, outcome_id, best_bid, best_ask, mid, last
+            """SELECT outcome_id,
+                      date_trunc('second', ts) AS sec,
+                      AVG(best_bid)  AS best_bid,
+                      AVG(best_ask)  AS best_ask,
+                      AVG(mid)       AS mid,
+                      AVG(last)      AS last
                FROM polymarket.price_snapshots
-               WHERE market_id = $1 AND ts >= $2 AND ts <= $3
-               ORDER BY ts, outcome_id""",
+               WHERE market_id = $1 AND ts >= $2 AND ts < $3
+               GROUP BY outcome_id, sec
+               ORDER BY sec, outcome_id""",
             market_id, starts_at, ends_at,
         )
-    out = []
+
+    # Index by (second_iso, outcome_label) for fast lookup.
+    index: dict[tuple[str, str], dict] = {}
     for r in rows:
-        out.append([
-            r["ts"].astimezone(timezone.utc).isoformat(),
-            label_by_id.get(r["outcome_id"], ""),
-            float(r["best_bid"]) if r["best_bid"] is not None else "",
-            float(r["best_ask"]) if r["best_ask"] is not None else "",
-            float(r["mid"]) if r["mid"] is not None else "",
-            float(r["last"]) if r["last"] is not None else "",
-        ])
-    header = ["ts_utc", "outcome", "best_bid", "best_ask", "mid", "last_trade_price"]
+        key = (r["sec"].astimezone(timezone.utc).isoformat(), label_by_id.get(r["outcome_id"], ""))
+        index[key] = r
+
+    # Walk the window second-by-second × outcome — every cell either has data
+    # or is marked missing.
+    total_seconds = int((ends_at - starts_at).total_seconds())
+    outcome_labels = [label_by_id[o.id] for o in outcomes]
+    out = []
+    for sec_offset in range(total_seconds):
+        sec = (starts_at + timedelta(seconds=sec_offset)).astimezone(timezone.utc).replace(microsecond=0)
+        sec_iso = sec.isoformat()
+        for label in outcome_labels:
+            r = index.get((sec_iso, label))
+            if r is None:
+                out.append([sec_iso, label, "", "", "", "", "false"])
+            else:
+                out.append([
+                    sec_iso, label,
+                    float(r["best_bid"]) if r["best_bid"] is not None else "",
+                    float(r["best_ask"]) if r["best_ask"] is not None else "",
+                    float(r["mid"]) if r["mid"] is not None else "",
+                    float(r["last"]) if r["last"] is not None else "",
+                    "true",
+                ])
+    header = ["ts_utc", "outcome", "best_bid", "best_ask", "mid", "last_trade_price", "data_present"]
     return _csv_response(out, header,
                          _export_filename(m["network_slug"], m["coin_slug"], starts_at, ends_at, "price-snapshots"))
