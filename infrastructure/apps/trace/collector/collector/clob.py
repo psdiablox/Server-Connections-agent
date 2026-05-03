@@ -116,7 +116,10 @@ async def _on_book(token_to_outcome: dict, msg: dict, stats: dict) -> None:
     best_ask = min((p for p, _ in asks), default=None)
     mid = (best_bid + best_ask) / 2 if best_bid is not None and best_ask is not None else None
 
-    # Update shared state so the 1 Hz emitter has fresh values to write.
+    # Update shared state. last_event_ts is *our* receive clock, not the
+    # Polymarket-supplied timestamp — the latter can be several seconds
+    # behind when they batch deliver initial books, which would falsely
+    # trigger the resubscribe watchdog on healthy outcomes.
     prev = _latest_state.get(outcome_id, {})
     _latest_state[outcome_id] = {
         "market_id": market_id,
@@ -124,7 +127,7 @@ async def _on_book(token_to_outcome: dict, msg: dict, stats: dict) -> None:
         "best_ask": best_ask,
         "mid": mid,
         "last": prev.get("last"),
-        "last_event_ts": ts,
+        "last_event_ts": datetime.now(tz=timezone.utc),
     }
 
     # Record every book — no dedup.
@@ -189,7 +192,7 @@ async def _on_last_trade(token_to_outcome: dict, msg: dict, stats: dict) -> None
     # Update shared state — last trade price for the 1 Hz emitter.
     state = _latest_state.setdefault(outcome_id, {"market_id": market_id})
     state["last"] = price
-    state["last_event_ts"] = ts
+    state["last_event_ts"] = datetime.now(tz=timezone.utc)
 
     async with pool().acquire() as conn:
         await conn.execute(
