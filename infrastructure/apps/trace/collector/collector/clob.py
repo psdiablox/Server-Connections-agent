@@ -238,16 +238,22 @@ async def _hz_price_emitter(stop: asyncio.Event) -> None:
 
 
 async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
-    """Run one ws session. Returns reason for exit: 'idle' | 'deadline' | 'closed' | 'error'."""
+    """Run one ws session. Returns reason for exit: 'idle' | 'deadline' | 'closed' | 'error'.
+
+    All cleanup happens in finally and is bounded — no path can leave the
+    hz_task / heartbeat task running past return."""
     log.info("clob ws connecting (%d tokens)", len(token_ids))
     stats = {"book": 0, "book_event": 0, "trade": 0}
     started = time.time()
     deadline = started + SESSION_MAX
     hb = Heartbeat(SOURCE)
-    # Reset shared state to only the outcomes this session is subscribed to.
     _latest_state.clear()
     hz_stop = asyncio.Event()
     hz_task = asyncio.create_task(_hz_price_emitter(hz_stop), name="hz-price")
+
+    result = "closed"
+    hb_reason: Optional[str] = "polymarket ws closed by peer"
+
     try:
         async with websockets.connect(
             settings.polymarket_clob_ws,
@@ -263,16 +269,18 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
                 now = time.time()
                 if now >= deadline:
                     log.info("clob session ok session_max | %s", stats)
-                    await hb.stop(None)
-                    return "deadline"
+                    result = "deadline"
+                    hb_reason = None
+                    break
                 remaining = max(1.0, min(deadline - now, IDLE_MAX - (now - last_msg)))
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
                 except asyncio.TimeoutError:
                     if time.time() - last_msg > IDLE_MAX:
                         log.warning("clob idle %ds, reconnecting | %s", IDLE_MAX, stats)
-                        await hb.stop(f"polymarket ws idle {IDLE_MAX}s — no messages received")
-                        return "idle"
+                        result = "idle"
+                        hb_reason = f"polymarket ws idle {IDLE_MAX}s — no messages received"
+                        break
                     continue
                 last_msg = time.time()
                 try:
@@ -295,41 +303,60 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
                         log.exception("clob handler error (event=%s)", evt)
     except Exception as e:
         log.exception("clob session crashed | %s", stats)
-        await hb.stop(f"polymarket ws crashed: {type(e).__name__}: {e}")
-        return "error"
+        result = "error"
+        hb_reason = f"polymarket ws crashed: {type(e).__name__}: {e}"
     finally:
+        # Tear down hz emitter — properly await even when cancelled.
         hz_stop.set()
         try:
-            await asyncio.wait_for(hz_task, timeout=2)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+            await asyncio.wait_for(hz_task, timeout=3)
+        except asyncio.TimeoutError:
             hz_task.cancel()
-    await hb.stop("polymarket ws closed by peer")
-    log.info("clob session closed | %s", stats)
-    return "closed"
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await hz_task
+        except Exception:
+            log.exception("hz_task cleanup error")
+        # Final heartbeat row
+        try:
+            await asyncio.wait_for(hb.stop(hb_reason), timeout=3)
+        except (asyncio.TimeoutError, Exception):
+            log.exception("heartbeat stop timeout/error (non-fatal)")
+
+    log.info("clob session ended (%s) | %s", result, stats)
+    return result
 
 
 async def clob_loop(market_signal: asyncio.Event) -> None:
     """Refresh subscription set once per session bound. New markets discovered
     mid-session are picked up on the next refresh (≤5 min). market_signal is
-    no longer used for hot reconnects — it caused storms."""
+    no longer used for hot reconnects — it caused storms.
+
+    Wraps each iteration in try/except so a stuck or crashing _session can
+    never silently kill the whole loop. The collector keeps running."""
     log.info("clob loop starting")
     backoff = 1.0
     while True:
-        outcomes = await _active_outcomes()
-        if not outcomes:
-            log.info("no active polymarket outcomes; sleeping 30s")
-            await asyncio.sleep(30)
-            continue
+        try:
+            outcomes = await asyncio.wait_for(_active_outcomes(), timeout=10)
+            if not outcomes:
+                log.info("no active polymarket outcomes; sleeping 30s")
+                await asyncio.sleep(30)
+                continue
 
-        token_to_outcome = {tok: (mid, oid) for tok, mid, oid in outcomes}
-        token_ids = list(token_to_outcome.keys())
+            token_to_outcome = {tok: (mid, oid) for tok, mid, oid in outcomes}
+            token_ids = list(token_to_outcome.keys())
 
-        reason = await _session(token_to_outcome, token_ids)
-        if reason == "error":
-            await asyncio.sleep(min(30.0, backoff))
-            backoff = min(30.0, backoff * 2)
-        else:
-            backoff = 1.0
-        # Drain any pending market_signal; we re-read outcomes on next iter.
-        if market_signal.is_set():
-            market_signal.clear()
+            reason = await _session(token_to_outcome, token_ids)
+            if reason == "error":
+                await asyncio.sleep(min(30.0, backoff))
+                backoff = min(30.0, backoff * 2)
+            else:
+                backoff = 1.0
+            if market_signal.is_set():
+                market_signal.clear()
+        except asyncio.CancelledError:
+            log.info("clob loop cancelled, exiting")
+            raise
+        except Exception:
+            log.exception("clob loop iteration crashed; retrying in 5s")
+            await asyncio.sleep(5)
