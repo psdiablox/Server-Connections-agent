@@ -27,8 +27,28 @@ log = logging.getLogger("trace.discovery")
 
 USER_AGENT = "trace-collector/0.1 (+https://data.pserenlo.com)"
 
-# Title regex: "Bitcoin Up or Down - <date>, <time>-<time> ET"
+# "Bitcoin Up or Down - <date>, <time>-<time> ET"
 TITLE_RE = re.compile(r"\bbitcoin\s+up\s+or\s+down\b", re.IGNORECASE)
+# Captures the explicit start-end time range from the title.
+TIME_RANGE_RE = re.compile(
+    r"(\d{1,2}):(\d{2})\s*(AM|PM)\s*-\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*ET",
+    re.IGNORECASE,
+)
+
+
+def _title_window_minutes(title: str) -> Optional[int]:
+    """Return duration in minutes for titles like '...2:35PM-2:40PM ET', or None."""
+    m = TIME_RANGE_RE.search(title)
+    if not m:
+        return None
+    sh, sm, sap, eh, em, eap = m.groups()
+    sh, sm, eh, em = int(sh), int(sm), int(eh), int(em)
+    if sap.upper() == "PM" and sh != 12: sh += 12
+    if sap.upper() == "AM" and sh == 12: sh = 0
+    if eap.upper() == "PM" and eh != 12: eh += 12
+    if eap.upper() == "AM" and eh == 12: eh = 0
+    duration = (eh - sh) * 60 + (em - sm)
+    return duration if duration > 0 else duration + 24 * 60
 
 
 def _parse_iso(s: str) -> Optional[datetime]:
@@ -40,15 +60,19 @@ def _parse_iso(s: str) -> Optional[datetime]:
 
 
 def _is_btc_5min(item: dict) -> tuple[bool, Optional[datetime], Optional[datetime]]:
-    """Return (matches, starts_at, ends_at) where the timestamps describe the
-    5-min resolution window — NOT the long trading window."""
+    """Return (matches, starts_at, ends_at) for a *true* 5-min Bitcoin Up/Down
+    market. Polymarket runs parallel 15-min, 30-min and hourly variants of the
+    series that all align on 5-min boundaries — the title's time range is the
+    only reliable disambiguator (e.g. '2:35PM-2:40PM ET' = 5 min)."""
     title = item.get("question") or item.get("title") or ""
     if not TITLE_RE.search(title):
+        return False, None, None
+    duration = _title_window_minutes(title)
+    if duration != 5:
         return False, None, None
     end = _parse_iso(item.get("endDate"))
     if not end:
         return False, None, None
-    # endDate must align to a 5-minute boundary.
     if end.second != 0 or end.microsecond != 0 or (end.minute % 5) != 0:
         return False, None, None
     starts = end - timedelta(seconds=settings.btc_window_seconds)
@@ -152,6 +176,18 @@ async def _upsert_market(item: dict, starts_at: datetime, ends_at: datetime) -> 
             coin_id = await conn.fetchval("SELECT id FROM core.coins WHERE slug='btc'")
             if not network_id or not coin_id:
                 log.error("polymarket/btc rows missing in core; check seed migration")
+                return None
+            # Skip if a market already exists for the same slot from a different
+            # external_id — keeps duplicates from showing up in the windows table.
+            dup = await conn.fetchval(
+                """
+                SELECT id FROM core.markets
+                WHERE network_id=$1 AND coin_id=$2 AND period_seconds=$3
+                  AND starts_at=$4 AND external_id != $5
+                """,
+                network_id, coin_id, settings.btc_window_seconds, starts_at, external_id,
+            )
+            if dup:
                 return None
             row = await conn.fetchrow(
                 """

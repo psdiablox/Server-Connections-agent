@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -101,17 +101,18 @@ async def get_ticks(
     if not starts_at or not ends_at:
         return []
 
+    bucket = timedelta(seconds=bucket_seconds)
     async with pool().acquire() as conn:
         yes_rows = await conn.fetch(
             """
-            SELECT time_bucket($1::interval, ts) AS t,
+            SELECT time_bucket($1, ts) AS t,
                    AVG(mid) AS mid, AVG(last) AS last
             FROM polymarket.price_snapshots
             WHERE market_id = $2 AND outcome_id = $3
               AND ts >= $4 AND ts <= $5
             GROUP BY t ORDER BY t
             """,
-            f"{bucket_seconds} seconds",
+            bucket,
             market_id,
             yes_id,
             starts_at,
@@ -119,14 +120,14 @@ async def get_ticks(
         ) if yes_id else []
         no_rows = await conn.fetch(
             """
-            SELECT time_bucket($1::interval, ts) AS t,
+            SELECT time_bucket($1, ts) AS t,
                    AVG(mid) AS mid, AVG(last) AS last
             FROM polymarket.price_snapshots
             WHERE market_id = $2 AND outcome_id = $3
               AND ts >= $4 AND ts <= $5
             GROUP BY t ORDER BY t
             """,
-            f"{bucket_seconds} seconds",
+            bucket,
             market_id,
             no_id,
             starts_at,
@@ -135,12 +136,12 @@ async def get_ticks(
         coin_id = m["coin_id"]
         coin_rows = await conn.fetch(
             """
-            SELECT time_bucket($1::interval, ts) AS t, AVG(price) AS price
+            SELECT time_bucket($1, ts) AS t, AVG(price) AS price
             FROM polymarket.coin_prices
             WHERE coin_id = $2 AND ts >= $3 AND ts <= $4
             GROUP BY t ORDER BY t
             """,
-            f"{bucket_seconds} seconds",
+            bucket,
             coin_id,
             starts_at,
             ends_at,

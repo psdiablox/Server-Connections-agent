@@ -34,6 +34,40 @@ async def _update_statuses() -> None:
         )
 
 
+async def _set_strike_for_started_markets() -> None:
+    """For any Polymarket BTC market that has just started (status flipped to
+    live or ended) and has no strike yet, take the BTC spot price closest to
+    starts_at and store it as the strike — these markets resolve YES if BTC
+    closed above this opening price, NO otherwise."""
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT m.id, m.starts_at, m.coin_id
+            FROM core.markets m
+            JOIN core.networks n ON n.id = m.network_id
+            WHERE n.slug='polymarket'
+              AND m.status IN ('live','ended')
+              AND m.strike IS NULL
+              AND m.coin_id IS NOT NULL
+            LIMIT 50
+            """
+        )
+        for r in rows:
+            price = await conn.fetchval(
+                """
+                SELECT price FROM polymarket.coin_prices
+                WHERE coin_id=$1 AND ts <= $2
+                ORDER BY ts DESC LIMIT 1
+                """,
+                r["coin_id"], r["starts_at"],
+            )
+            if price is not None:
+                await conn.execute(
+                    "UPDATE core.markets SET strike=$1, updated_at=now() WHERE id=$2",
+                    float(price), r["id"],
+                )
+
+
 async def _update_aggregates() -> None:
     """For each market touched in the last status interval window, recompute
     total_volume / traders / last_yes / last_no."""
@@ -102,6 +136,7 @@ async def status_loop() -> None:
     while True:
         try:
             await _update_statuses()
+            await _set_strike_for_started_markets()
             await _update_aggregates()
         except Exception:
             log.exception("status loop error")
