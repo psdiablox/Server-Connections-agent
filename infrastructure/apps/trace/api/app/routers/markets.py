@@ -288,6 +288,7 @@ async def get_book_heatmap(
 
     outcome_ids = [oid for oid in (yes_id, no_id) if oid is not None]
     async with pool().acquire() as conn:
+        # In-window snapshots
         rows = await conn.fetch(
             """
             SELECT outcome_id, ts, bids, asks
@@ -299,11 +300,31 @@ async def get_book_heatmap(
             """,
             market_id, outcome_ids, starts_at, ends_at,
         )
+        # Pre-window seed: latest snapshot per outcome BEFORE starts_at — gives
+        # us the book state at window open instead of letting early buckets
+        # look dim until the first in-window snapshot arrives.
+        seeds = await conn.fetch(
+            """
+            SELECT DISTINCT ON (outcome_id) outcome_id, ts, bids, asks
+            FROM polymarket.book_snapshots
+            WHERE market_id = $1
+              AND outcome_id = ANY($2::bigint[])
+              AND ts < $3
+            ORDER BY outcome_id, ts DESC
+            """,
+            market_id, outcome_ids, starts_at,
+        )
 
     # Group rows by outcome (already ordered by outcome_id, ts in the SQL).
     by_outcome: dict[int, list] = {}
     for r in rows:
         by_outcome.setdefault(r["outcome_id"], []).append(r)
+    # Prepend the seed snapshot per outcome with its ts clamped to starts_at,
+    # so its state is treated as in-effect from window start.
+    for s in seeds:
+        seed = {"outcome_id": s["outcome_id"], "ts": starts_at, "bids": s["bids"], "asks": s["asks"]}
+        existing = by_outcome.setdefault(s["outcome_id"], [])
+        existing.insert(0, seed)
 
     for outcome_id, snaps in by_outcome.items():
         is_yes = outcome_id == yes_id
