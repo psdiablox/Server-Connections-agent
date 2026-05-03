@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Coin, type Network, type WindowList, type WindowSummary } from "../api";
-import { fmt, fmtCompact, fmtLocalWindow, fmtWindowTime, localTZ } from "../lib/format";
+import { fmt, fmtCompact, fmtLocalWindow, fmtWindowET, localTZ } from "../lib/format";
 
 const TFS = [
   { id: "5m", label: "5 MIN" },
@@ -106,7 +106,7 @@ export function PolyWindows({
       <div className="pw-table-wrap">
         <div className="pw-table-head mono">
           <div>STATUS</div>
-          <div>WINDOW (UTC)</div>
+          <div>WINDOW (ET)</div>
           <div>LOCAL</div>
           <div className="num">STRIKE</div>
           <div className="num">YES</div>
@@ -185,7 +185,7 @@ function WindowRow({ w, onPick }: { w: WindowSummary; onPick: (w: WindowSummary)
           {w.status.toUpperCase()}
         </span>
       </div>
-      <div>{fmtWindowTime(w.starts_at, w.ends_at)} <span style={{ color: "var(--fg-3)", fontSize: 10 }}>UTC</span></div>
+      <div>{fmtWindowET(w.starts_at, w.ends_at)} <span style={{ color: "var(--fg-3)", fontSize: 10 }}>ET</span></div>
       <div>{local} <span style={{ color: "var(--fg-3)", fontSize: 10 }}>{localTZ()}</span></div>
       <div className="num">{w.strike != null ? "$" + fmt(w.strike, w.strike < 1 ? 4 : (w.strike < 100 ? 2 : 0)) : "—"}</div>
       <div className={"num " + (yes >= 0.5 ? "pw-yes" : "pw-no")}>

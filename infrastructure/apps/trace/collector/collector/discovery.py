@@ -92,17 +92,26 @@ def _parse_strike(item: dict) -> Optional[float]:
 
 
 async def _fetch_active(session: aiohttp.ClientSession) -> list[dict]:
-    """Pull a chunk of currently-active markets, ordered newest-first by
-    startDate. The "Bitcoin Up or Down" series only ever has a few open at
-    once, so a small limit is fine."""
+    """Pull every still-active market ending in [now - 10min, now + 26h].
+    BTC up/down markets open ~24h before resolution, so this captures:
+      - the live market (resolving in the next 5 min)
+      - all upcoming markets created in the last 24h
+      - markets that ended in the last 10 min (still 'active' in gamma's grace)
+    Ordered by endDate ascending so we hit the live one first.
+    """
+    now = datetime.now(tz=timezone.utc)
+    end_min = (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    end_max = (now + timedelta(hours=26)).strftime("%Y-%m-%dT%H:%M:%SZ")
     url = f"{settings.polymarket_gamma_url}/markets"
     params = {
         "active": "true",
         "closed": "false",
         "archived": "false",
-        "order": "startDate",
-        "ascending": "false",
-        "limit": 50,
+        "end_date_min": end_min,
+        "end_date_max": end_max,
+        "order": "endDate",
+        "ascending": "true",
+        "limit": 500,
     }
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:

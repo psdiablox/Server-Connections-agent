@@ -21,6 +21,7 @@ export function fmtTime(t: string | number | Date): string {
 
 const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
+// "MAY 04, 15:55-16:00" in UTC — kept for breadcrumb / data-feed contexts.
 export function fmtWindowTime(start: string, end: string): string {
   const s = new Date(start);
   const e = new Date(end);
@@ -37,6 +38,30 @@ export function fmtWindowTime(start: string, end: string): string {
     pad(e.getUTCHours()) +
     ":" +
     pad(e.getUTCMinutes())
+  );
+}
+
+// "MAY 04, 11:55-12:00" in America/New_York — matches Polymarket's own label.
+export function fmtWindowET(start: string, end: string): string {
+  const s = new Date(start);
+  const e = new Date(end);
+  const dateFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "2-digit",
+  });
+  const timeFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return (
+    dateFmt.format(s).toUpperCase().replace(" ", " ") +
+    ", " +
+    timeFmt.format(s) +
+    "–" +
+    timeFmt.format(e)
   );
 }
 
