@@ -215,23 +215,14 @@ async def _resubscribe_watchdog(
     stop: asyncio.Event,
     started_at: float,
 ) -> None:
-    """Per-outcome silence detector. While the WS session is alive, every few
-    seconds we look at last_event_ts for each subscribed outcome:
-
-      - If an outcome has been silent for OUTCOME_SILENT seconds AND
-        at least one *other* subscribed outcome had an event in the last
-        PEER_FRESH seconds, the WS itself is healthy but Polymarket has
-        silently dropped this subscription. Resubscribe just those tokens
-        on the same connection.
-
-      - Cooldown per outcome to avoid spamming if Polymarket persistently
-        refuses to honour the sub.
-
-    The first START_GRACE seconds give Polymarket time to deliver initial
-    book snapshots before we start judging silence.
-    """
+    """Per-outcome silence detector, scoped to LIVE markets only. Upcoming
+    markets have no expected data flow and would constantly trigger false
+    positives. Live markets are expected to trade continuously."""
     START_GRACE = 5.0
+    LIVE_REFRESH = 15.0
     last_resub: dict[int, float] = {}
+    live_market_ids: set[int] = set()
+    last_live_check = 0.0
 
     while not stop.is_set():
         try:
@@ -245,7 +236,24 @@ async def _resubscribe_watchdog(
         now_dt = datetime.now(tz=timezone.utc)
         now_t = time.time()
 
-        # Is the WS itself producing data right now? Check across all known peers.
+        # Refresh the live-markets set occasionally.
+        if now_t - last_live_check > LIVE_REFRESH:
+            try:
+                async with pool().acquire() as conn:
+                    rows = await conn.fetch(
+                        """SELECT m.id FROM core.markets m
+                           JOIN core.networks n ON n.id = m.network_id
+                           WHERE n.slug='polymarket' AND m.status='live'"""
+                    )
+                live_market_ids = {r["id"] for r in rows}
+                last_live_check = now_t
+            except Exception:
+                log.exception("watchdog: live markets query failed")
+
+        if not live_market_ids:
+            continue  # nothing live, no expectation
+
+        # Is the WS producing any data right now?
         any_peer_fresh = any(
             s.get("last_event_ts") is not None
             and (now_dt - s["last_event_ts"]).total_seconds() < PEER_FRESH
@@ -254,14 +262,14 @@ async def _resubscribe_watchdog(
         if not any_peer_fresh:
             continue  # WS-wide silence — IDLE_MAX handles a real outage
 
-        # Find stuck tokens to resubscribe.
+        # Find stuck tokens to resubscribe (live markets only).
         stuck: list[tuple[str, int, float]] = []
         for tok, (mid, oid) in token_to_outcome.items():
+            if mid not in live_market_ids:
+                continue
             s = _latest_state.get(oid, {})
             last = s.get("last_event_ts")
             silent = (now_dt - last).total_seconds() if last is not None else None
-            # silent==None means we never received the initial book; that's
-            # also a sign of a non-honoured subscription (after grace).
             if silent is None or silent > OUTCOME_SILENT:
                 if now_t - last_resub.get(oid, 0) > RESUB_COOLDOWN:
                     stuck.append((tok, oid, silent or 999.0))
@@ -273,7 +281,7 @@ async def _resubscribe_watchdog(
             await ws.send(payload)
             for tok, oid, silent in stuck:
                 last_resub[oid] = now_t
-                log.warning("resubscribed outcome=%d after %.0fs silence (peers fresh)", oid, silent)
+                log.warning("resubscribed live outcome=%d after %.0fs silence (peers fresh)", oid, silent)
         except Exception:
             log.exception("watchdog resubscribe failed")
 
