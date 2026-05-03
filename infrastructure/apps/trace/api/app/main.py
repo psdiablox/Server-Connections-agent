@@ -8,6 +8,7 @@ from .config import settings
 from .db import close_pool, init_pool
 from .migrate import migrate_with_pool
 from .routers import auth as auth_router
+from .routers import health as health_router
 from .routers import markets as markets_router
 from .routers import networks as networks_router
 
@@ -42,5 +43,6 @@ async def health() -> dict:
 
 
 app.include_router(auth_router.router)
+app.include_router(health_router.router)
 app.include_router(networks_router.router)
 app.include_router(markets_router.router)

@@ -23,7 +23,9 @@ export function PolyAnalysis({
   const [trades, setTrades] = useState<Trade[]>([]);
   const [heatmap, setHeatmap] = useState<Heatmap | null>(null);
   const [stats, setStats] = useState<OrderStats | null>(null);
-  const [layers, setLayers] = useState<ChartLayers>({ yes: true, no: true, base: true, strike: true, heatmap: true });
+  const [layers, setLayers] = useState<ChartLayers>({
+    yes: true, no: true, base: true, strike: true, heatmap: true, bubbles: true, volume: true,
+  });
   const toggle = (k: keyof ChartLayers) => setLayers((v) => ({ ...v, [k]: !v[k] }));
 
   useEffect(() => {
@@ -114,7 +116,9 @@ export function PolyAnalysis({
         <Toggle on={layers.yes} onClick={() => toggle("yes")} color="#22c55e" label="YES" />
         <Toggle on={layers.no} onClick={() => toggle("no")} color="#ef4444" label="NO" />
         <Toggle on={layers.base} onClick={() => toggle("base")} color={coin.color || "#fff"} label={`${coin.symbol} PRICE`} />
-        <Toggle on={layers.strike} onClick={() => toggle("strike")} color="#fbbf24" label="STRIKE / 50¢" />
+        <Toggle on={layers.strike} onClick={() => toggle("strike")} color="#fbbf24" label="STRIKE" />
+        <Toggle on={layers.bubbles} onClick={() => toggle("bubbles")} color="#9ca3af" label="TRADE BUBBLES" />
+        <Toggle on={layers.volume} onClick={() => toggle("volume")} color="#b8bfcc" label="VOLUME" />
         <Toggle on={layers.heatmap} onClick={() => toggle("heatmap")} color="#9b6dff" label="ORDER ACCUMULATION" />
       </div>
 
@@ -122,11 +126,14 @@ export function PolyAnalysis({
         <div className="anal-chart-col">
           <AnalysisChart
             ticks={ticks}
+            trades={trades}
             heatmap={heatmap}
+            startsAt={window.starts_at}
+            endsAt={window.ends_at}
             strike={window.strike}
             baseColor={coin.color || "#fff"}
             layers={layers}
-            height={520}
+            height={560}
           />
           <div className="pa-trades-strip">
             <TradesTable trades={trades} />

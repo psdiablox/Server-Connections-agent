@@ -139,8 +139,10 @@ async def _fetch_active(session: aiohttp.ClientSession) -> list[dict]:
     Ordered by endDate ascending so we hit the live one first.
     """
     now = datetime.now(tz=timezone.utc)
+    # Look back 10 min (catch markets that just ended) and forward only 15 min
+    # (the next 2-3 upcoming windows). Avoids stockpiling 250+ upcoming rows.
     end_min = (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    end_max = (now + timedelta(hours=26)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    end_max = (now + timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
     url = f"{settings.polymarket_gamma_url}/markets"
     params = {
         "active": "true",
