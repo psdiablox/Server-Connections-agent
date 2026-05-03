@@ -330,7 +330,7 @@ async def get_outages(market_id: int) -> list[Outage]:
         # 1 — heartbeat gaps per source ----------------------------------
         sources = await conn.fetch(
             "SELECT DISTINCT source FROM core.collection_health "
-            "WHERE ts >= $1 - INTERVAL '5 minutes' AND ts <= $2 + INTERVAL '5 minutes'",
+            "WHERE ts >= ($1::timestamptz - INTERVAL '5 minutes') AND ts <= ($2::timestamptz + INTERVAL '5 minutes')",
             starts_at, ends_at,
         )
         SRC_GAP = 30
@@ -339,8 +339,8 @@ async def get_outages(market_id: int) -> list[Outage]:
             rows = await conn.fetch(
                 """SELECT ts, status, reason FROM core.collection_health
                    WHERE source = $1
-                     AND ts >= $2 - INTERVAL '5 minutes'
-                     AND ts <= $3 + INTERVAL '5 minutes'
+                     AND ts >= ($2::timestamptz - INTERVAL '5 minutes')
+                     AND ts <= ($3::timestamptz + INTERVAL '5 minutes')
                    ORDER BY ts""",
                 src, starts_at, ends_at,
             )
