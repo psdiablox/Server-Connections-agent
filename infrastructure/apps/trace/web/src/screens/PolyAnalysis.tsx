@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Coin, type Heatmap, type Market, type Network, type OrderStats, type Tick, type Trade, type WindowSummary } from "../api";
+import { api, type Coin, type Heatmap, type Market, type Network, type OrderStats, type Outage, type Tick, type Trade, type WindowSummary } from "../api";
 import { fmt, fmtCompact, fmtWindowTime } from "../lib/format";
 import { AnalysisChart, type ChartLayers } from "../components/AnalysisChart";
 import { TradesTable } from "../components/TradesTable";
@@ -23,6 +23,7 @@ export function PolyAnalysis({
   const [trades, setTrades] = useState<Trade[]>([]);
   const [heatmap, setHeatmap] = useState<Heatmap | null>(null);
   const [stats, setStats] = useState<OrderStats | null>(null);
+  const [outages, setOutages] = useState<Outage[]>([]);
   const [layers, setLayers] = useState<ChartLayers>({
     yes: true, no: true, base: true, strike: true, heatmap: true, bubbles: true, volume: true,
   });
@@ -35,13 +36,15 @@ export function PolyAnalysis({
       api.trades(window.id, 2000),
       api.heatmap(window.id, 80, 80, "YES").catch(() => null),
       api.orderStats(window.id),
+      api.outages(window.id).catch(() => []),
     ])
-      .then(([m, t, tr, hm, s]) => {
+      .then(([m, t, tr, hm, s, o]) => {
         setMarket(m);
         setTicks(t);
         setTrades(tr);
         setHeatmap(hm);
         setStats(s);
+        setOutages(o);
       })
       .catch(console.error);
   }, [window.id]);
@@ -128,6 +131,7 @@ export function PolyAnalysis({
             ticks={ticks}
             trades={trades}
             heatmap={heatmap}
+            outages={outages}
             startsAt={window.starts_at}
             endsAt={window.ends_at}
             strike={window.strike}

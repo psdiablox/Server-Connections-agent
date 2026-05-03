@@ -16,6 +16,9 @@ import websockets
 
 from .config import settings
 from .db import pool
+from .health import Heartbeat, emit as emit_health
+
+SOURCE = "binance"
 
 log = logging.getLogger("trace.binance")
 
@@ -63,6 +66,7 @@ async def binance_loop() -> None:
 
     flush_task = asyncio.create_task(flusher())
 
+    hb = Heartbeat(SOURCE)
     try:
         while True:
             try:
@@ -72,13 +76,13 @@ async def binance_loop() -> None:
                     ping_interval=20,
                     ping_timeout=20,
                 ) as ws:
+                    hb.start()
                     while True:
                         raw = await ws.recv()
                         try:
                             msg = orjson.loads(raw)
                         except orjson.JSONDecodeError:
                             continue
-                        # Trade message: { e:"trade", T:ms, p:"price", q:"qty", ... }
                         if msg.get("e") != "trade":
                             continue
                         try:
@@ -88,8 +92,10 @@ async def binance_loop() -> None:
                             continue
                         sec = ts_ms // 1000
                         pending[sec] = price
-            except Exception:
+            except Exception as e:
                 log.exception("binance ws error; reconnecting in 5s")
+                await hb.stop(f"binance ws error: {type(e).__name__}: {e}")
                 await asyncio.sleep(5)
     finally:
         flush_task.cancel()
+        await hb.stop(None)

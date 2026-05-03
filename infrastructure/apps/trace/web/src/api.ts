@@ -67,6 +67,14 @@ export type Heatmap = {
   grid: number[][];
 };
 
+export type Outage = {
+  source: string;
+  start: string;
+  end: string;
+  reason: string | null;
+  duration_seconds: number;
+};
+
 export type OrderStats = {
   yes_buy_count: number;
   yes_sell_count: number;
@@ -137,6 +145,7 @@ export const api = {
   heatmap: (id: number, levels = 80, buckets = 80, outcome = "YES") =>
     req<Heatmap>(`/markets/${id}/book/heatmap?levels=${levels}&buckets=${buckets}&outcome=${outcome}`),
   orderStats: (id: number) => req<OrderStats>(`/markets/${id}/order-stats`),
+  outages: (id: number) => req<Outage[]>(`/markets/${id}/outages`),
 };
 
 export { HttpError };

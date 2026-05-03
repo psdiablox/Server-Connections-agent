@@ -10,6 +10,7 @@ from ..schemas import (
     HeatmapResponse,
     Market,
     OrderStats,
+    Outage,
     Outcome,
     Tick,
     Trade,
@@ -291,6 +292,87 @@ async def get_book_heatmap(
         ends_at=ends_at,
         grid=grid,
     )
+
+
+@router.get("/markets/{market_id}/outages", response_model=list[Outage])
+async def get_outages(market_id: int, gap_seconds: int = 30) -> list[Outage]:
+    """Returns intervals during this market's window where heartbeat data is
+    missing for more than `gap_seconds` seconds, plus any explicit 'down'
+    rows in the same window. The chart paints these as red bands."""
+    m = await _load_market(market_id)
+    starts_at = m["starts_at"]
+    ends_at = m["ends_at"]
+    if not starts_at or not ends_at:
+        return []
+
+    outages: list[Outage] = []
+    async with pool().acquire() as conn:
+        sources = await conn.fetch(
+            "SELECT DISTINCT source FROM core.collection_health "
+            "WHERE ts >= $1 - INTERVAL '5 minutes' AND ts <= $2 + INTERVAL '5 minutes'",
+            starts_at, ends_at,
+        )
+        for src_row in sources:
+            src = src_row["source"]
+            rows = await conn.fetch(
+                """
+                SELECT ts, status, reason FROM core.collection_health
+                WHERE source = $1
+                  AND ts >= $2 - INTERVAL '5 minutes'
+                  AND ts <= $3 + INTERVAL '5 minutes'
+                ORDER BY ts
+                """,
+                src, starts_at, ends_at,
+            )
+
+            # Walk the heartbeat sequence; any gap > threshold within the
+            # market window becomes an outage.
+            prev_ts = None
+            prev_reason = None
+            for r in rows:
+                ts = r["ts"]
+                status = r["status"]
+                reason = r["reason"]
+                if prev_ts is not None:
+                    gap = (ts - prev_ts).total_seconds()
+                    if gap > gap_seconds:
+                        clipped_start = max(prev_ts, starts_at)
+                        clipped_end = min(ts, ends_at)
+                        if clipped_end > clipped_start:
+                            outages.append(Outage(
+                                source=src,
+                                start=clipped_start,
+                                end=clipped_end,
+                                reason=prev_reason or "no heartbeat",
+                                duration_seconds=(clipped_end - clipped_start).total_seconds(),
+                            ))
+                prev_ts = ts
+                prev_reason = reason if status == "down" else None
+
+            # Trailing gap: if the last heartbeat is before window-end, treat
+            # the rest of the window as down.
+            if prev_ts is not None and prev_ts < ends_at - timedelta(seconds=gap_seconds):
+                clipped_start = max(prev_ts, starts_at)
+                if clipped_start < ends_at:
+                    outages.append(Outage(
+                        source=src,
+                        start=clipped_start,
+                        end=ends_at,
+                        reason=prev_reason or "no heartbeat at window end",
+                        duration_seconds=(ends_at - clipped_start).total_seconds(),
+                    ))
+            elif prev_ts is None:
+                # No heartbeats AT ALL during this window
+                outages.append(Outage(
+                    source=src,
+                    start=starts_at,
+                    end=ends_at,
+                    reason="no heartbeat data",
+                    duration_seconds=(ends_at - starts_at).total_seconds(),
+                ))
+
+    outages.sort(key=lambda o: o.start)
+    return outages
 
 
 @router.get("/markets/{market_id}/order-stats", response_model=OrderStats)

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import type { Heatmap, Tick, Trade } from "../api";
+import type { Heatmap, Outage, Tick, Trade } from "../api";
 
 export type ChartLayers = {
   yes: boolean;
@@ -15,6 +15,7 @@ type Props = {
   ticks: Tick[];
   trades: Trade[];
   heatmap: Heatmap | null;
+  outages?: Outage[];
   startsAt: string;
   endsAt: string;
   strike: number | null;
@@ -29,12 +30,14 @@ const PROB_TICKS = [0, 0.2, 0.4, 0.5, 0.6, 0.8, 1];
 type Hover =
   | null
   | { kind: "cursor"; x: number; y: number }
-  | { kind: "trade"; x: number; y: number; trade: Trade };
+  | { kind: "trade"; x: number; y: number; trade: Trade }
+  | { kind: "outage"; x: number; y: number; outage: Outage };
 
 export function AnalysisChart({
   ticks,
   trades,
   heatmap,
+  outages = [],
   startsAt,
   endsAt,
   strike,
@@ -232,6 +235,19 @@ export function AnalysisChart({
   const [hover, setHover] = useState<Hover>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
+  const visibleOutages = useMemo(() => {
+    return outages
+      .map((o) => {
+        const s = new Date(o.start).getTime();
+        const e = new Date(o.end).getTime();
+        const x1 = x(Math.max(s, t0));
+        const x2 = x(Math.min(e, t1));
+        if (x2 <= M.left || x1 >= M.left + innerW || x2 - x1 < 0.5) return null;
+        return { o, x1: Math.max(M.left, x1), x2: Math.min(M.left + innerW, x2) };
+      })
+      .filter((v): v is NonNullable<typeof v> => v !== null);
+  }, [outages, t0, t1, innerW]);
+
   const onMove: React.MouseEventHandler<SVGSVGElement> = (e) => {
     const svg = svgRef.current;
     if (!svg) return;
@@ -254,9 +270,15 @@ export function AnalysisChart({
     }
     if (best) {
       setHover({ kind: "trade", x: best.b.tx, y: best.b.ty, trade: best.b.tr });
-    } else {
-      setHover({ kind: "cursor", x: local.x, y: local.y });
+      return;
     }
+    // Inside an outage band?
+    const ovr = visibleOutages.find((v) => local.x >= v.x1 && local.x <= v.x2);
+    if (ovr) {
+      setHover({ kind: "outage", x: local.x, y: local.y, outage: ovr.o });
+      return;
+    }
+    setHover({ kind: "cursor", x: local.x, y: local.y });
   };
   const onLeave = () => setHover(null);
 
@@ -283,7 +305,41 @@ export function AnalysisChart({
         onMouseMove={onMove}
         onMouseLeave={onLeave}
       >
+        {/* Diagonal stripe pattern for outage bands */}
+        <defs>
+          <pattern id="outage-stripes" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+            <rect width="6" height="6" fill="rgba(239,68,68,0.18)" />
+            <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(239,68,68,0.55)" strokeWidth="2" />
+          </pattern>
+        </defs>
+
         {layers.heatmap && cells}
+
+        {/* Outage bands — under everything else so the data still reads */}
+        {visibleOutages.map((v, i) => (
+          <g key={i}>
+            <rect
+              x={v.x1}
+              y={M.top}
+              width={v.x2 - v.x1}
+              height={innerH + (layers.volume ? M.vol : 0)}
+              fill="url(#outage-stripes)"
+            />
+            <line x1={v.x1} x2={v.x1} y1={M.top} y2={M.top + innerH + (layers.volume ? M.vol : 0)} stroke="rgba(239,68,68,0.7)" strokeWidth="1" />
+            <line x1={v.x2} x2={v.x2} y1={M.top} y2={M.top + innerH + (layers.volume ? M.vol : 0)} stroke="rgba(239,68,68,0.7)" strokeWidth="1" />
+            <text
+              x={(v.x1 + v.x2) / 2}
+              y={M.top + 12}
+              fontSize="9"
+              fontFamily="var(--font-mono)"
+              fill="#ef4444"
+              textAnchor="middle"
+              opacity={0.95}
+            >
+              ⚠ {v.o.source} · {v.o.duration_seconds.toFixed(0)}s
+            </text>
+          </g>
+        ))}
 
         {/* Probability gridlines + left axis */}
         {PROB_TICKS.map((p) => (
@@ -294,14 +350,42 @@ export function AnalysisChart({
               y1={yProb(p)}
               y2={yProb(p)}
               stroke="var(--line)"
-              strokeDasharray={p === 0.5 ? "0" : "3 4"}
-              opacity={p === 0.5 ? 0.6 : 0.5}
+              strokeDasharray="3 4"
+              opacity={0.5}
             />
             <text x={M.left - 8} y={yProb(p) + 3} fontSize="10" fontFamily="var(--font-mono)" fill="var(--fg-3)" textAnchor="end">
               {Math.round(p * 100)}¢
             </text>
           </g>
         ))}
+
+        {/* Strike / 50¢ line — prominent, amber, dashed. By construction the
+            BTC strike level maps to y=50% (axes are aligned) so this single
+            line represents both. */}
+        {layers.strike && (
+          <g>
+            <line
+              x1={M.left}
+              x2={M.left + innerW}
+              y1={yProb(0.5)}
+              y2={yProb(0.5)}
+              stroke="#fbbf24"
+              strokeWidth={1.4}
+              strokeDasharray="6 4"
+              opacity={0.85}
+            />
+            <text
+              x={M.left + 6}
+              y={yProb(0.5) - 5}
+              fontSize="10"
+              fontFamily="var(--font-mono)"
+              fill="#fbbf24"
+              opacity={0.9}
+            >
+              50¢{strike != null ? ` · STRIKE $${formatBtc(strike)}` : ""}
+            </text>
+          </g>
+        )}
 
         {/* Right axis BTC ticks */}
         {layers.base &&
@@ -311,12 +395,6 @@ export function AnalysisChart({
             </text>
           ))}
 
-        {/* Strike label on right axis (sits at y=50% by construction) */}
-        {layers.strike && strike != null && (
-          <text x={M.left + innerW + 8} y={yProb(0.5) - 4} fontSize="10" fontFamily="var(--font-mono)" fill="#fbbf24">
-            ${formatBtc(strike)}
-          </text>
-        )}
 
         {/* Time axis */}
         <line x1={M.left} x2={M.left + innerW} y1={M.top + innerH} y2={M.top + innerH} stroke="var(--line-2)" />
@@ -415,6 +493,29 @@ export function AnalysisChart({
           </div>
           <div className="tt-row mono">{(hover.trade.price * 100).toFixed(2)}¢ · ${(hover.trade.price * hover.trade.size).toFixed(2)}</div>
           <div className="tt-row dim mono">{fmtClock(new Date(hover.trade.t))}</div>
+        </div>
+      )}
+
+      {/* Outage tooltip */}
+      {hover && hover.kind === "outage" && (
+        <div
+          className="trade-tip"
+          style={{
+            position: "absolute",
+            left: `${(hover.x / W) * 100}%`,
+            top: `${(hover.y / height) * 100}%`,
+            transform: "translate(12px, -50%)",
+            pointerEvents: "none",
+            borderColor: "#ef4444",
+            maxWidth: 280,
+            whiteSpace: "normal",
+          }}
+        >
+          <div className="tt-row" style={{ color: "#ef4444", fontWeight: 600 }}>⚠ COLLECTOR DOWN</div>
+          <div className="tt-row mono">source: {hover.outage.source}</div>
+          <div className="tt-row mono">duration: {hover.outage.duration_seconds.toFixed(0)} s</div>
+          {hover.outage.reason && <div className="tt-row mono dim">{hover.outage.reason}</div>}
+          <div className="tt-row dim mono">{fmtClock(new Date(hover.outage.start))} → {fmtClock(new Date(hover.outage.end))}</div>
         </div>
       )}
 

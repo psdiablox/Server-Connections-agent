@@ -28,6 +28,9 @@ import websockets
 
 from .config import settings
 from .db import pool
+from .health import Heartbeat, emit as emit_health
+
+SOURCE = "polymarket-clob"
 
 log = logging.getLogger("trace.clob")
 
@@ -196,6 +199,7 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
     stats = {"book": 0, "book_dedup": 0, "book_event": 0, "trade": 0}
     started = time.time()
     deadline = started + SESSION_MAX
+    hb = Heartbeat(SOURCE)
     try:
         async with websockets.connect(
             settings.polymarket_clob_ws,
@@ -205,11 +209,13 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
             close_timeout=5,
         ) as ws:
             await ws.send(orjson.dumps({"type": "market", "assets_ids": token_ids}).decode())
+            hb.start()
             last_msg = time.time()
             while True:
                 now = time.time()
                 if now >= deadline:
                     log.info("clob session ok session_max | %s", stats)
+                    await hb.stop(None)
                     return "deadline"
                 remaining = max(1.0, min(deadline - now, IDLE_MAX - (now - last_msg)))
                 try:
@@ -217,6 +223,7 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
                 except asyncio.TimeoutError:
                     if time.time() - last_msg > IDLE_MAX:
                         log.warning("clob idle %ds, reconnecting | %s", IDLE_MAX, stats)
+                        await hb.stop(f"polymarket ws idle {IDLE_MAX}s — no messages received")
                         return "idle"
                     continue
                 last_msg = time.time()
@@ -238,9 +245,11 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
                             await _on_last_trade(token_to_outcome, msg, stats)
                     except Exception:
                         log.exception("clob handler error (event=%s)", evt)
-    except Exception:
+    except Exception as e:
         log.exception("clob session crashed | %s", stats)
+        await hb.stop(f"polymarket ws crashed: {type(e).__name__}: {e}")
         return "error"
+    await hb.stop("polymarket ws closed by peer")
     log.info("clob session closed | %s", stats)
     return "closed"
 

@@ -126,6 +126,14 @@ class HeatmapResponse(BaseModel):
     grid: list[list[float]]
 
 
+class Outage(BaseModel):
+    source: str
+    start: datetime
+    end: datetime
+    reason: Optional[str] = None
+    duration_seconds: float
+
+
 class OrderStats(BaseModel):
     yes_buy_count: int
     yes_sell_count: int
