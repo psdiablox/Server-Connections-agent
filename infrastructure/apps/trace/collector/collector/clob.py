@@ -196,10 +196,15 @@ async def _on_last_trade(token_to_outcome: dict, msg: dict, stats: dict) -> None
         stats["trade"] += 1
 
 
+FRESH_DATA_WINDOW = timedelta(seconds=15)
+
+
 async def _hz_price_emitter(stop: asyncio.Event) -> None:
-    """Writes one price_snapshots row per active outcome every second using
-    whatever values are most recently in _latest_state. Guarantees a regular
-    1 Hz time grid for charting even when book/trade events are silent."""
+    """Writes one price_snapshots row per active outcome every second — but
+    ONLY for outcomes whose last book/trade event arrived within the last
+    FRESH_DATA_WINDOW seconds. This ensures stale state (e.g. when Polymarket
+    silently drops a market subscription mid-window) shows up as a gap in
+    price_snapshots, which the /outages endpoint then surfaces on the chart."""
     while not stop.is_set():
         try:
             await asyncio.wait_for(stop.wait(), timeout=1.0)
@@ -209,19 +214,18 @@ async def _hz_price_emitter(stop: asyncio.Event) -> None:
         if not _latest_state:
             continue
         now = datetime.now(tz=timezone.utc)
-        rows = [
-            (
-                s.get("market_id"),
-                oid,
-                now,
-                s.get("best_bid"),
-                s.get("best_ask"),
-                s.get("mid"),
-                s.get("last"),
-            )
-            for oid, s in list(_latest_state.items())
-            if s.get("market_id") is not None
-        ]
+        rows = []
+        for oid, s in list(_latest_state.items()):
+            if s.get("market_id") is None:
+                continue
+            last_event = s.get("last_event_ts")
+            if last_event is None or (now - last_event) > FRESH_DATA_WINDOW:
+                continue  # stale — let it become a real gap
+            rows.append((
+                s["market_id"], oid, now,
+                s.get("best_bid"), s.get("best_ask"),
+                s.get("mid"), s.get("last"),
+            ))
         if not rows:
             continue
         try:
