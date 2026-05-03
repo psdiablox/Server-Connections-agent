@@ -19,15 +19,17 @@ export function fmtTime(t: string | number | Date): string {
   return new Date(t).toTimeString().slice(0, 8);
 }
 
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
 export function fmtWindowTime(start: string, end: string): string {
   const s = new Date(start);
   const e = new Date(end);
   const pad = (n: number) => String(n).padStart(2, "0");
   return (
-    pad(s.getUTCMonth() + 1) +
-    "/" +
-    pad(s.getUTCDate()) +
+    MONTHS[s.getUTCMonth()] +
     " " +
+    pad(s.getUTCDate()) +
+    ", " +
     pad(s.getUTCHours()) +
     ":" +
     pad(s.getUTCMinutes()) +
@@ -35,6 +37,26 @@ export function fmtWindowTime(start: string, end: string): string {
     pad(e.getUTCHours()) +
     ":" +
     pad(e.getUTCMinutes())
+  );
+}
+
+export function fmtLocalWindow(start: string, end: string): string {
+  const s = new Date(start);
+  const e = new Date(end);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const today = new Date();
+  const sameDay =
+    s.getFullYear() === today.getFullYear() &&
+    s.getMonth() === today.getMonth() &&
+    s.getDate() === today.getDate();
+  const datePart = sameDay
+    ? ""
+    : MONTHS[s.getMonth()] + " " + pad(s.getDate()) + ", ";
+  return (
+    datePart +
+    pad(s.getHours()) + ":" + pad(s.getMinutes()) +
+    "–" +
+    pad(e.getHours()) + ":" + pad(e.getMinutes())
   );
 }
 

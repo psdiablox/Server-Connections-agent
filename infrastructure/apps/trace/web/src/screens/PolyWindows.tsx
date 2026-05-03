@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Coin, type Network, type WindowList, type WindowSummary } from "../api";
-import { fmt, fmtCompact, fmtWindowTime, localTZ, pad2 } from "../lib/format";
+import { fmt, fmtCompact, fmtLocalWindow, fmtWindowTime, localTZ } from "../lib/format";
 
 const TFS = [
   { id: "5m", label: "5 MIN" },
@@ -144,7 +144,7 @@ export function PolyWindows({
         .pw-table-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 16px 32px; background: var(--bg-0); overflow: hidden; }
         .pw-table-head, .pw-row {
           display: grid;
-          grid-template-columns: 90px 200px 130px 90px 70px 70px 100px 90px 130px 60px;
+          grid-template-columns: 90px 230px 200px 80px 70px 70px 110px 90px 110px 50px;
           align-items: center; gap: 12px; padding: 0 14px;
         }
         .pw-table-head { height: 32px; font-size: 9px; color: var(--fg-3); border-bottom: 1px solid var(--line); background: var(--bg-1); }
@@ -175,9 +175,7 @@ export function PolyWindows({
 }
 
 function WindowRow({ w, onPick }: { w: WindowSummary; onPick: (w: WindowSummary) => void }) {
-  const startD = new Date(w.starts_at);
-  const endD = new Date(w.ends_at);
-  const local = `${pad2(startD.getHours())}:${pad2(startD.getMinutes())}–${pad2(endD.getHours())}:${pad2(endD.getMinutes())}`;
+  const local = fmtLocalWindow(w.starts_at, w.ends_at);
   const yes = w.last_yes ?? 0;
   return (
     <div className="pw-row" onClick={() => onPick(w)}>
