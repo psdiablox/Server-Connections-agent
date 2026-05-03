@@ -14,12 +14,12 @@ from .discovery import discovery_loop
 from .health import emit as emit_health
 from .status import status_loop
 
-# Liveness budget: if clob_loop hasn't iterated in this many seconds, force a
-# process restart. Polymarket BTC 5-min markets always have flowing data, and
-# a healthy clob_loop iterates at least once every 5 minutes (SESSION_MAX).
-# Anything beyond 2 minutes of stillness while live markets exist = wedge.
-CLOB_STALL_BUDGET = 120.0
-LIVENESS_CHECK_INTERVAL = 30.0
+# Liveness budget: if clob_loop hasn't progressed in this many seconds, force
+# a process restart. clob_iteration_ts is updated on every successful WS
+# recv() — that's our 'I'm alive and processing' pulse. If 60 s pass without
+# a single message AND no clean reconnect happened, something is wedged.
+CLOB_STALL_BUDGET = 60.0
+LIVENESS_CHECK_INTERVAL = 20.0
 
 logging.basicConfig(
     level=settings.log_level.upper(),

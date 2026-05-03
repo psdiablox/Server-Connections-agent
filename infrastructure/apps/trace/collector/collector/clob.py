@@ -405,6 +405,13 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
                         break
                     continue
                 last_msg = time.time()
+                # Heartbeat the liveness watchdog: each successful recv proves
+                # the asyncio loop is processing data, not just sitting at the
+                # top of clob_loop. Updating only at iteration boundaries was
+                # too coarse — SESSION_MAX (300s) > watchdog budget caused
+                # spurious force-restarts mid-session.
+                global clob_iteration_ts  # noqa: PLW0603
+                clob_iteration_ts = time.monotonic()
                 try:
                     payload = orjson.loads(raw)
                 except orjson.JSONDecodeError:
