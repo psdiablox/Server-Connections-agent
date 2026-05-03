@@ -1,0 +1,11 @@
+.env
+*.env.local
+
+# Build artifacts
+web/dist/
+web/node_modules/
+api/__pycache__/
+api/.venv/
+collector/__pycache__/
+collector/.venv/
+**/*.pyc

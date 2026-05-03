@@ -1,0 +1,6 @@
+asyncpg==0.30.0
+aiohttp==3.11.10
+websockets==14.1
+orjson==3.10.12
+pydantic==2.10.4
+pydantic-settings==2.7.0

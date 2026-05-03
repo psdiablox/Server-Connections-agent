@@ -1,0 +1,132 @@
+name: trace
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
+  proxy:
+    external: true
+
+volumes:
+  db-data:
+
+services:
+  db:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: trace-db
+    restart: unless-stopped
+    networks:
+      - internal
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-trace}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-trace}
+      - TZ=${TZ:-UTC}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trace} -d ${POSTGRES_DB:-trace}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+
+  api:
+    build:
+      context: ./api
+    container_name: trace-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+      - proxy
+    volumes:
+      - ./db/migrations:/migrations:ro
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trace}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-trace}
+      - MIGRATIONS_DIR=/migrations
+      - TRACE_USER=${TRACE_USER}
+      - TRACE_PASSWORD_HASH=${TRACE_PASSWORD_HASH}
+      - TRACE_JWT_SECRET=${TRACE_JWT_SECRET}
+      - TRACE_COOKIE_DOMAIN=data.${DOMAIN}
+      - TRACE_COOKIE_SECURE=true
+      - LOG_LEVEL=${API_LOG_LEVEL:-info}
+      - TZ=${TZ:-UTC}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      # API — /api/* on data.${DOMAIN}
+      - "traefik.http.routers.trace-api.rule=Host(`data.${DOMAIN}`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.trace-api.entrypoints=websecure"
+      - "traefik.http.routers.trace-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.trace-api.middlewares=admin-ip@file,secure-headers@file,rate-limit@file"
+      - "traefik.http.routers.trace-api.priority=20"
+      - "traefik.http.services.trace-api.loadbalancer.server.port=8000"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+
+  collector:
+    build:
+      context: ./collector
+    container_name: trace-collector
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - internal
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trace}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-trace}
+      - POLYMARKET_GAMMA_URL=https://gamma-api.polymarket.com
+      - POLYMARKET_CLOB_WS=wss://ws-subscriptions-clob.polymarket.com/ws/market
+      - BINANCE_WS=wss://stream.binance.com:9443/ws/btcusdt@trade
+      - DISCOVERY_INTERVAL_SECONDS=60
+      - LOG_LEVEL=${COLLECTOR_LOG_LEVEL:-info}
+      - TZ=${TZ:-UTC}
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+
+  web:
+    build:
+      context: ./web
+    container_name: trace-web
+    restart: unless-stopped
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      # Web — everything else on data.${DOMAIN}
+      - "traefik.http.routers.trace-web.rule=Host(`data.${DOMAIN}`)"
+      - "traefik.http.routers.trace-web.entrypoints=websecure"
+      - "traefik.http.routers.trace-web.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.trace-web.middlewares=admin-ip@file,secure-headers@file,rate-limit@file"
+      - "traefik.http.routers.trace-web.priority=10"
+      - "traefik.http.services.trace-web.loadbalancer.server.port=80"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.2"
