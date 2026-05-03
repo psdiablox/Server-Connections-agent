@@ -92,8 +92,8 @@ export function AnalysisChart({
     return { yesLine: ys, noLine: ns };
   }, [trades]);
 
-  const yesPath = useMemo(() => makeLinePath(yesLine, x, yProb, t1), [yesLine, t0, t1, dt, innerH]);
-  const noPath = useMemo(() => makeLinePath(noLine, x, yProb, t1), [noLine, t0, t1, dt, innerH]);
+  const yesPath = useMemo(() => makeLinePath(yesLine, x, yProb), [yesLine, t0, t1, dt, innerH]);
+  const noPath = useMemo(() => makeLinePath(noLine, x, yProb), [noLine, t0, t1, dt, innerH]);
 
   // Base price scale — symmetric around strike so STRIKE sits exactly on 50¢.
   const { yBase, baseMin, baseMax } = useMemo(() => {
@@ -547,11 +547,12 @@ export function AnalysisChart({
 function makeLinePath(
   trades: Trade[],
   x: (ms: number) => number,
-  y: (p: number) => number,
-  endMs?: number
+  y: (p: number) => number
 ): string {
   if (trades.length === 0) return "";
   // Step path: each trade defines a price level that holds until the next trade.
+  // Deliberately does NOT extend past the last trade — when the line stops,
+  // it's the operator's signal to look for an outage band.
   let d = "";
   let prevY: number | null = null;
   for (let i = 0; i < trades.length; i++) {
@@ -564,14 +565,6 @@ function makeLinePath(
       d += ` L ${cx.toFixed(1)} ${prevY!.toFixed(1)} L ${cx.toFixed(1)} ${cy.toFixed(1)}`;
     }
     prevY = cy;
-  }
-  // Extend horizontally to the end of the visible window with the last known
-  // value — the price holds until either a new trade or window close.
-  if (endMs !== undefined && prevY !== null) {
-    const lastTradeMs = new Date(trades[trades.length - 1].t).getTime();
-    if (endMs > lastTradeMs) {
-      d += ` L ${x(endMs).toFixed(1)} ${prevY.toFixed(1)}`;
-    }
   }
   return d;
 }

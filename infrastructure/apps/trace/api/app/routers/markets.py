@@ -308,10 +308,17 @@ async def get_book_heatmap(
 
 
 @router.get("/markets/{market_id}/outages", response_model=list[Outage])
-async def get_outages(market_id: int, gap_seconds: int = 30) -> list[Outage]:
-    """Returns intervals during this market's window where heartbeat data is
-    missing for more than `gap_seconds` seconds, plus any explicit 'down'
-    rows in the same window. The chart paints these as red bands."""
+async def get_outages(market_id: int) -> list[Outage]:
+    """Two kinds of outages are reported, both as red bands on the chart:
+
+    1. Source-level: gaps in the heartbeat written by a collector subsystem
+       (polymarket-clob, binance) — used when the whole subsystem went silent.
+       Threshold: 30 s without a heartbeat.
+
+    2. Market-level: gaps in the 1 Hz price_snapshots stream for this specific
+       market. Catches the case where the WS stayed alive overall but lost
+       this particular market's subscription. Threshold: 5 s without a snap.
+    """
     m = await _load_market(market_id)
     starts_at = m["starts_at"]
     ends_at = m["ends_at"]
@@ -320,71 +327,100 @@ async def get_outages(market_id: int, gap_seconds: int = 30) -> list[Outage]:
 
     outages: list[Outage] = []
     async with pool().acquire() as conn:
+        # 1 — heartbeat gaps per source ----------------------------------
         sources = await conn.fetch(
             "SELECT DISTINCT source FROM core.collection_health "
             "WHERE ts >= $1 - INTERVAL '5 minutes' AND ts <= $2 + INTERVAL '5 minutes'",
             starts_at, ends_at,
         )
+        SRC_GAP = 30
         for src_row in sources:
             src = src_row["source"]
             rows = await conn.fetch(
-                """
-                SELECT ts, status, reason FROM core.collection_health
-                WHERE source = $1
-                  AND ts >= $2 - INTERVAL '5 minutes'
-                  AND ts <= $3 + INTERVAL '5 minutes'
-                ORDER BY ts
-                """,
+                """SELECT ts, status, reason FROM core.collection_health
+                   WHERE source = $1
+                     AND ts >= $2 - INTERVAL '5 minutes'
+                     AND ts <= $3 + INTERVAL '5 minutes'
+                   ORDER BY ts""",
                 src, starts_at, ends_at,
             )
-
-            # Walk the heartbeat sequence; any gap > threshold within the
-            # market window becomes an outage.
             prev_ts = None
             prev_reason = None
             for r in rows:
                 ts = r["ts"]
-                status = r["status"]
-                reason = r["reason"]
                 if prev_ts is not None:
                     gap = (ts - prev_ts).total_seconds()
-                    if gap > gap_seconds:
-                        clipped_start = max(prev_ts, starts_at)
-                        clipped_end = min(ts, ends_at)
-                        if clipped_end > clipped_start:
+                    if gap > SRC_GAP:
+                        s = max(prev_ts, starts_at)
+                        e = min(ts, ends_at)
+                        if e > s:
                             outages.append(Outage(
                                 source=src,
-                                start=clipped_start,
-                                end=clipped_end,
-                                reason=prev_reason or "no heartbeat",
-                                duration_seconds=(clipped_end - clipped_start).total_seconds(),
+                                start=s, end=e,
+                                reason=prev_reason or f"{src} silent for {gap:.0f}s",
+                                duration_seconds=(e - s).total_seconds(),
                             ))
                 prev_ts = ts
-                prev_reason = reason if status == "down" else None
-
-            # Trailing gap: if the last heartbeat is before window-end, treat
-            # the rest of the window as down.
-            if prev_ts is not None and prev_ts < ends_at - timedelta(seconds=gap_seconds):
-                clipped_start = max(prev_ts, starts_at)
-                if clipped_start < ends_at:
+                prev_reason = r["reason"] if r["status"] == "down" else None
+            if prev_ts is not None and prev_ts < ends_at - timedelta(seconds=SRC_GAP):
+                s = max(prev_ts, starts_at)
+                if s < ends_at:
                     outages.append(Outage(
                         source=src,
-                        start=clipped_start,
-                        end=ends_at,
-                        reason=prev_reason or "no heartbeat at window end",
-                        duration_seconds=(ends_at - clipped_start).total_seconds(),
+                        start=s, end=ends_at,
+                        reason=prev_reason or f"{src} silent at window end",
+                        duration_seconds=(ends_at - s).total_seconds(),
                     ))
-            elif prev_ts is None:
-                # No heartbeats AT ALL during this window
+
+        # 2 — per-market price_snapshot gaps -----------------------------
+        snap_rows = await conn.fetch(
+            """SELECT ts FROM polymarket.price_snapshots
+               WHERE market_id = $1 AND ts >= $2 AND ts <= $3
+               ORDER BY ts""",
+            market_id, starts_at, ends_at,
+        )
+        MARKET_GAP = 5
+        if not snap_rows:
+            outages.append(Outage(
+                source="market-data",
+                start=starts_at, end=ends_at,
+                reason="no price snapshot recorded for this market in the window — collector may have missed subscription",
+                duration_seconds=(ends_at - starts_at).total_seconds(),
+            ))
+        else:
+            prev = starts_at
+            first_ts = snap_rows[0]["ts"]
+            if (first_ts - starts_at).total_seconds() > MARKET_GAP:
                 outages.append(Outage(
-                    source=src,
-                    start=starts_at,
-                    end=ends_at,
-                    reason="no heartbeat data",
-                    duration_seconds=(ends_at - starts_at).total_seconds(),
+                    source="market-data",
+                    start=starts_at, end=first_ts,
+                    reason=f"no price data captured for first {(first_ts - starts_at).total_seconds():.0f}s — collector subscribed late or pre-window data not retained",
+                    duration_seconds=(first_ts - starts_at).total_seconds(),
+                ))
+            prev = first_ts
+            for r in snap_rows[1:]:
+                ts = r["ts"]
+                gap = (ts - prev).total_seconds()
+                if gap > MARKET_GAP:
+                    outages.append(Outage(
+                        source="market-data",
+                        start=prev, end=ts,
+                        reason=f"no price snapshot for {gap:.0f}s — Polymarket WS likely dropped this market's subscription",
+                        duration_seconds=gap,
+                    ))
+                prev = ts
+            trail = (ends_at - prev).total_seconds()
+            if trail > MARKET_GAP:
+                outages.append(Outage(
+                    source="market-data",
+                    start=prev, end=ends_at,
+                    reason=f"no price snapshot for last {trail:.0f}s of window — subscription lost before close",
+                    duration_seconds=trail,
                 ))
 
-    outages.sort(key=lambda o: o.start)
+    # Merge overlapping market-data + source outages? Keep separate so the
+    # user can see which layer failed — they get distinct bands.
+    outages.sort(key=lambda o: (o.start, o.source))
     return outages
 
 
