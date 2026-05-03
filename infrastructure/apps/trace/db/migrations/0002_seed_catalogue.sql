@@ -25,7 +25,7 @@ ON CONFLICT (slug) DO NOTHING;
 
 -- Polymarket coverage: BTC enabled (v1), others rendered but disabled.
 INSERT INTO core.network_coins (network_id, coin_id, enabled, sort_order)
-SELECT n.id, c.id, c.slug='btc', sort_order
+SELECT n.id, c.id, c.slug='btc', x.sort_order
 FROM core.networks n
 CROSS JOIN (
   VALUES
