@@ -25,9 +25,15 @@ export function PolyWindows({
   const [tf, setTf] = useState("5m");
   const [statusFilter, setStatusFilter] = useState<"all" | "live" | "upcoming" | "ended">("all");
   const [resFilter, setResFilter] = useState<"all" | "yes" | "no">("all");
-  const [sort, setSort] = useState<"time" | "vol" | "traders">("time");
+  const [sort, setSort] = useState<string>("time");
+  const [dir, setDir] = useState<"asc" | "desc">("desc");
   const [data, setData] = useState<WindowList | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const onHeader = (key: string) => {
+    if (sort === key) setDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSort(key); setDir("desc"); }
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -37,12 +43,13 @@ export function PolyWindows({
         status: statusFilter,
         resolution: resFilter,
         sort,
+        dir,
         limit: 500,
       })
       .then(setData)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [network.slug, coin.slug, tf, statusFilter, resFilter, sort]);
+  }, [network.slug, coin.slug, tf, statusFilter, resFilter, sort, dir]);
 
   const counts = data?.counts || { all: 0, live: 0, upcoming: 0, ended: 0 };
 
@@ -96,25 +103,22 @@ export function PolyWindows({
           ))}
         </div>
         <div className="pw-segment" style={{ marginLeft: "auto" }}>
-          <span className="mono dim" style={{ fontSize: 10, marginRight: 4 }}>SORT</span>
-          {(["time", "vol", "traders"] as const).map((s) => (
-            <button key={s} className={"btn tiny " + (sort === s ? "active" : "ghost")} onClick={() => setSort(s)}>{s.toUpperCase()}</button>
-          ))}
+          <span className="mono dim" style={{ fontSize: 10 }}>click any column header to sort</span>
         </div>
       </div>
 
       <div className="pw-table-wrap">
         <div className="pw-table-head mono">
-          <div>STATUS</div>
-          <div>WINDOW (ET)</div>
-          <div>LOCAL</div>
-          <div className="num">STRIKE</div>
-          <div className="num">BTC CLOSE</div>
-          <div className="num">VOLUME</div>
-          <div className="num">TRADES</div>
-          <div className="num">LARGEST</div>
-          <div className="num">AVG</div>
-          <div>RESULT</div>
+          <SortHead label="STATUS"     k="status"  sort={sort} dir={dir} onClick={onHeader} />
+          <SortHead label="WINDOW (ET)" k="time"    sort={sort} dir={dir} onClick={onHeader} />
+          <SortHead label="LOCAL"      k="time"    sort={sort} dir={dir} onClick={onHeader} />
+          <SortHead label="STRIKE"     k="strike"  sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="BTC CLOSE"  k="close"   sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="VOLUME"     k="vol"     sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="TRADES"     k="trades"  sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="LARGEST"    k="largest" sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="AVG"        k="avg"     sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="RESULT"     k="result"  sort={sort} dir={dir} onClick={onHeader} />
           <div></div>
         </div>
         <div className="pw-table-body">
@@ -155,6 +159,15 @@ export function PolyWindows({
         .pw-row:hover { background: var(--bg-2); }
         .pw-row .num { text-align: right; }
         .pw-empty { padding: 40px; text-align: center; color: var(--fg-3); }
+        .sort-head {
+          cursor: pointer; user-select: none;
+          display: inline-flex; align-items: center; gap: 4px;
+          transition: color 80ms;
+        }
+        .sort-head.num { justify-content: flex-end; }
+        .sort-head:hover { color: var(--fg-1); }
+        .sort-head.active { color: var(--fg-0); }
+        .sort-arrow { font-size: 8px; }
         .pw-status { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; font-size: 10px; font-weight: 600; letter-spacing: 0.08em; }
         .pw-status .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
         .pw-status.live { background: rgba(34,197,94,0.12); color: #22c55e; }
@@ -172,6 +185,24 @@ export function PolyWindows({
         @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
       `}</style>
     </>
+  );
+}
+
+function SortHead({
+  label, k, sort, dir, onClick, num = false,
+}: {
+  label: string; k: string; sort: string; dir: "asc" | "desc";
+  onClick: (k: string) => void; num?: boolean;
+}) {
+  const active = sort === k;
+  return (
+    <div
+      className={"sort-head" + (num ? " num" : "") + (active ? " active" : "")}
+      onClick={() => onClick(k)}
+    >
+      {label}
+      {active && <span className="sort-arrow"> {dir === "asc" ? "▲" : "▼"}</span>}
+    </div>
   );
 }
 

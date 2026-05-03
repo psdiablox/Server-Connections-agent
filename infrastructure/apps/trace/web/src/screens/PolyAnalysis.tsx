@@ -25,9 +25,17 @@ export function PolyAnalysis({
   const [stats, setStats] = useState<OrderStats | null>(null);
   const [outages, setOutages] = useState<Outage[]>([]);
   const [layers, setLayers] = useState<ChartLayers>({
-    yes: true, no: true, base: true, strike: true, heatmap: true, bubbles: true, volume: true,
+    yes: true, no: true, base: true, strike: true, heatmap: true,
+    yesBuy: true, yesSell: true, noBuy: true, noSell: true,
+    volume: true,
   });
   const toggle = (k: keyof ChartLayers) => setLayers((v) => ({ ...v, [k]: !v[k] }));
+  const [bubblesOpen, setBubblesOpen] = useState(false);
+  const setAllBubbles = (on: boolean) =>
+    setLayers((v) => ({ ...v, yesBuy: on, yesSell: on, noBuy: on, noSell: on }));
+  const bubblesAllOn = layers.yesBuy && layers.yesSell && layers.noBuy && layers.noSell;
+  const bubblesAnyOn = layers.yesBuy || layers.yesSell || layers.noBuy || layers.noSell;
+  const bubblesOnCount = [layers.yesBuy, layers.yesSell, layers.noBuy, layers.noSell].filter(Boolean).length;
 
   // Zoom: visible window range as fraction of full [0..1].
   const [zoom, setZoom] = useState<{ a: number; b: number }>({ a: 0, b: 1 });
@@ -137,7 +145,40 @@ export function PolyAnalysis({
         <Toggle on={layers.no} onClick={() => toggle("no")} color="#ef4444" label="NO" />
         <Toggle on={layers.base} onClick={() => toggle("base")} color={coin.color || "#fff"} label={`${coin.symbol} PRICE`} />
         <Toggle on={layers.strike} onClick={() => toggle("strike")} color="#fbbf24" label="STRIKE" />
-        <Toggle on={layers.bubbles} onClick={() => toggle("bubbles")} color="#9ca3af" label="TRADE BUBBLES" />
+
+        {/* Trade bubbles dropdown */}
+        <div className="bubble-menu-wrap">
+          <button
+            className={"leg-toggle bubble-trigger " + (bubblesAnyOn ? "on" : "off")}
+            onClick={() => setBubblesOpen((o) => !o)}
+          >
+            <span className="bubble-glyph">
+              <span className="bg-dot" style={{ background: "#22c55e" }}></span>
+              <span className="bg-dot ring" style={{ borderColor: "#22c55e" }}></span>
+              <span className="bg-dot" style={{ background: "#ef4444" }}></span>
+              <span className="bg-dot ring" style={{ borderColor: "#ef4444" }}></span>
+            </span>
+            TRADE BUBBLES
+            <span className="bubble-count mono">{bubblesOnCount}/4</span>
+            <span className="caret">{bubblesOpen ? "▴" : "▾"}</span>
+          </button>
+          {bubblesOpen && (
+            <div className="bubble-menu">
+              <div className="bm-head mono">
+                <span>BUBBLE FILTERS</span>
+                <button className="bm-allbtn" onClick={() => setAllBubbles(!bubblesAllOn)}>
+                  {bubblesAllOn ? "HIDE ALL" : "SHOW ALL"}
+                </button>
+              </div>
+              <BubbleRow on={layers.yesBuy} onClick={() => toggle("yesBuy")} color="#22c55e" filled label="YES BUY" />
+              <BubbleRow on={layers.yesSell} onClick={() => toggle("yesSell")} color="#22c55e" label="YES SELL" />
+              <BubbleRow on={layers.noBuy} onClick={() => toggle("noBuy")} color="#ef4444" filled label="NO BUY" />
+              <BubbleRow on={layers.noSell} onClick={() => toggle("noSell")} color="#ef4444" label="NO SELL" />
+              <div className="bm-foot mono">Filled = BUY · Ring = SELL · Size = $ traded</div>
+            </div>
+          )}
+        </div>
+
         <Toggle on={layers.volume} onClick={() => toggle("volume")} color="#b8bfcc" label="VOLUME" />
         <Toggle on={layers.heatmap} onClick={() => toggle("heatmap")} color="#9b6dff" label="ORDER ACCUMULATION" />
 
@@ -202,9 +243,41 @@ export function PolyAnalysis({
         .leg-toggle.off { opacity: 0.4; text-decoration: line-through; }
         .leg-toggle .swatch { width: 14px; height: 2px; }
         .pa-trades-strip { border-top: 1px solid var(--line); flex-shrink: 0; height: 240px; }
-        .pa-zoom { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+        .pa-zoom {
+          display: inline-flex; align-items: center; gap: 4px;
+          margin-left: auto;
+          /* Align with chart right edge — pull left by the rail width so the
+             zoom buttons sit above the graph, not above ORDER STATS. */
+          margin-right: 340px;
+        }
+        @media (max-width: 1100px) { .pa-zoom { margin-right: 300px; } }
         .pa-zoom .label { margin-right: 6px; }
         .pa-zoom .btn { min-width: 28px; }
+
+        /* Bubble dropdown */
+        .bubble-menu-wrap { position: relative; }
+        .bubble-trigger { display: inline-flex; align-items: center; gap: 8px; padding-right: 8px !important; }
+        .bubble-glyph { display: inline-flex; gap: 2px; align-items: center; }
+        .bg-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+        .bg-dot.ring { background: transparent !important; border: 1.5px solid; }
+        .bubble-count { font-size: 9px; color: var(--fg-3); padding: 1px 4px; background: var(--bg-1); border: 1px solid var(--line); }
+        .caret { font-size: 9px; color: var(--fg-3); }
+        .bubble-menu {
+          position: absolute; top: calc(100% + 6px); left: 0;
+          background: var(--bg-1); border: 1px solid var(--line-2);
+          padding: 4px; min-width: 220px; z-index: 50;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+        }
+        .bm-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px 8px; font-size: 9px; color: var(--fg-3); letter-spacing: 0.12em; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+        .bm-allbtn { background: transparent; border: 1px solid var(--line); color: var(--fg-2); padding: 2px 6px; font-family: var(--font-mono); font-size: 9px; cursor: pointer; letter-spacing: 0.08em; }
+        .bm-allbtn:hover { color: var(--fg-0); border-color: var(--line-2); }
+        .bm-row { display: flex; align-items: center; gap: 10px; padding: 5px 8px; cursor: pointer; user-select: none; transition: background 100ms; }
+        .bm-row:hover { background: var(--bg-2); }
+        .bm-row.off { opacity: 0.45; }
+        .bm-check { width: 12px; font-family: var(--font-mono); font-size: 11px; color: var(--fg-0); }
+        .bm-bubble { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid; flex-shrink: 0; }
+        .bm-label { font-size: 11px; letter-spacing: 0.04em; }
+        .bm-foot { font-size: 9px; color: var(--fg-3); padding: 6px 8px; border-top: 1px solid var(--line); margin-top: 4px; letter-spacing: 0.04em; }
       `}</style>
     </>
   );
@@ -225,5 +298,20 @@ function Toggle({ on, onClick, color, label }: { on: boolean; onClick: () => voi
       <span className="swatch" style={{ background: color }}></span>
       {label}
     </span>
+  );
+}
+
+function BubbleRow({ on, onClick, color, filled, label }: {
+  on: boolean; onClick: () => void; color: string; filled?: boolean; label: string;
+}) {
+  return (
+    <div className={"bm-row " + (on ? "on" : "off")} onClick={onClick}>
+      <span className="bm-check">{on ? "✓" : ""}</span>
+      <span
+        className="bm-bubble"
+        style={filled ? { background: color, borderColor: color } : { background: "transparent", borderColor: color }}
+      ></span>
+      <span className="bm-label mono">{label}</span>
+    </div>
   );
 }

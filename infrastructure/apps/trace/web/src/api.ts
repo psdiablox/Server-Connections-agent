@@ -135,7 +135,7 @@ export const api = {
   windows: (
     network: string,
     coin: string,
-    params: { tf?: string; status?: string; resolution?: string; sort?: string; limit?: number; offset?: number } = {}
+    params: { tf?: string; status?: string; resolution?: string; sort?: string; dir?: "asc" | "desc"; limit?: number; offset?: number } = {}
   ) => {
     const q = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => v !== undefined && q.set(k, String(v)));

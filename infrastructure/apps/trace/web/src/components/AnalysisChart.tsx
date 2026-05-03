@@ -7,7 +7,10 @@ export type ChartLayers = {
   base: boolean;
   strike: boolean;
   heatmap: boolean;
-  bubbles: boolean;
+  yesBuy: boolean;
+  yesSell: boolean;
+  noBuy: boolean;
+  noSell: boolean;
   volume: boolean;
 };
 
@@ -150,25 +153,30 @@ export function AnalysisChart({
     return out;
   }, [heatmap, layers.heatmap, innerW, innerH]);
 
-  // Bubbles
+  // Bubbles — filtered by the four sub-toggles (yesBuy / yesSell / noBuy / noSell)
+  const anyBubble = layers.yesBuy || layers.yesSell || layers.noBuy || layers.noSell;
   const bubbleData = useMemo(() => {
-    if (!layers.bubbles || trades.length === 0) return [];
+    if (!anyBubble || trades.length === 0) return [];
     const sizes = trades.map((t) => t.price * t.size);
     const maxV = Math.max(...sizes, 1);
     return trades
       .map((tr) => {
+        const isYes = tr.outcome === "YES";
+        const filled = tr.side === "BUY";
+        const visible = isYes
+          ? (filled ? layers.yesBuy : layers.yesSell)
+          : (filled ? layers.noBuy : layers.noSell);
+        if (!visible) return null;
         const tx = x(new Date(tr.t).getTime());
         if (tx < M.left - 5 || tx > M.left + innerW + 5) return null;
         const ty = yProb(tr.price);
         const $ = tr.price * tr.size;
         const r = Math.max(2.5, Math.min(14, 2.5 + Math.sqrt($ / maxV) * 14));
-        const isYes = tr.outcome === "YES";
         const color = isYes ? "#22c55e" : "#ef4444";
-        const filled = tr.side === "BUY";
         return { tx, ty, r, color, filled, tr };
       })
       .filter((b): b is NonNullable<typeof b> => b !== null);
-  }, [trades, layers.bubbles, innerW, t0, dt]);
+  }, [trades, anyBubble, layers.yesBuy, layers.yesSell, layers.noBuy, layers.noSell, innerW, t0, dt]);
 
   // Volume bars
   const volBars = useMemo(() => {
@@ -403,7 +411,7 @@ export function AnalysisChart({
           {layers.base && basePath && <path d={basePath} fill="none" stroke={baseColor} strokeWidth={1.5} opacity={0.85} />}
           {layers.yes && yesPath && <path d={yesPath} fill="none" stroke="#22c55e" strokeWidth={1.5} />}
           {layers.no && noPath && <path d={noPath} fill="none" stroke="#ef4444" strokeWidth={1.5} />}
-          {layers.bubbles &&
+          {anyBubble &&
             bubbleData.map((b, i) => (
               <circle
                 key={i}

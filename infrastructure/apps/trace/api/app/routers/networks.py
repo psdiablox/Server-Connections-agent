@@ -115,6 +115,7 @@ async def list_windows(
     status_filter: str = Query("all", alias="status"),
     resolution: str = Query("all"),
     sort: str = Query("time"),
+    direction: str = Query("desc", alias="dir"),
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> WindowList:
@@ -132,11 +133,22 @@ async def list_windows(
         where.append(f"m.resolution = ${len(args)}")
     where_sql = " AND ".join(where)
 
-    order_sql = {
-        "time": "m.starts_at DESC",
-        "vol": "m.total_volume DESC NULLS LAST",
-        "traders": "m.traders DESC NULLS LAST",
-    }.get(sort, "m.starts_at DESC")
+    sort_columns = {
+        "time": "m.starts_at",
+        "vol": "m.total_volume",
+        "traders": "m.traders",
+        "trades": "m.trade_count",
+        "largest": "m.largest_trade",
+        "avg": "m.avg_trade",
+        "strike": "m.strike",
+        "close": "m.close_btc",
+        "status": "m.status",
+        "result": "m.last_yes",
+    }
+    column = sort_columns.get(sort, "m.starts_at")
+    dir_sql = "ASC" if direction.lower() == "asc" else "DESC"
+    nulls = "NULLS LAST" if dir_sql == "DESC" else "NULLS FIRST"
+    order_sql = f"{column} {dir_sql} {nulls}"
 
     async with pool().acquire() as conn:
         total = await conn.fetchval(
