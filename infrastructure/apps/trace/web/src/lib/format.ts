@@ -93,3 +93,12 @@ export function localTZ(): string {
 export function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
+
+/** UI-side label for a market outcome. Polymarket's BTC up/down markets are
+ *  stored canonically as YES/NO in the DB; users find UP/DOWN clearer for
+ *  these direction markets. */
+export function outcomeLabel(canonical: string | null | undefined): string {
+  if (canonical === "YES") return "UP";
+  if (canonical === "NO") return "DOWN";
+  return canonical || "";
+}

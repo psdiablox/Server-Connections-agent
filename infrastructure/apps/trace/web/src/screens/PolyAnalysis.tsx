@@ -140,7 +140,7 @@ export function PolyAnalysis({
         </div>
         <div className="ticker">
           <span className={`pw-status ${window.status}`}><span className="dot"></span>{window.status.toUpperCase()}</span>
-          {window.resolution && <span className={`pw-res ${window.resolution.toLowerCase()}`} style={{ marginLeft: 6 }}>RESOLVED {window.resolution}</span>}
+          {window.resolution && <span className={`pw-res ${window.resolution.toLowerCase()}`} style={{ marginLeft: 6 }}>RESOLVED {window.resolution === "YES" ? "UP" : window.resolution === "NO" ? "DOWN" : window.resolution}</span>}
         </div>
       </div>
 
@@ -216,14 +216,14 @@ export function PolyAnalysis({
           <Stat label="CLOSE" v={hero.close != null ? "$" + fmt(hero.close, 0) : "—"} dir={hero.close != null && window.strike != null ? (hero.close >= window.strike ? "up" : "down") : ""} />
           <Stat label="HIGH" v={hero.high != null ? "$" + fmt(hero.high, 0) : "—"} />
           <Stat label="LOW" v={hero.low != null ? "$" + fmt(hero.low, 0) : "—"} />
-          <Stat label="YES PEAK" v={hero.yesPeak != null ? (hero.yesPeak * 100).toFixed(1) + "¢" : "—"} />
-          <Stat label="YES TROUGH" v={hero.yesTrough != null ? (hero.yesTrough * 100).toFixed(1) + "¢" : "—"} />
+          <Stat label="UP PEAK" v={hero.yesPeak != null ? (hero.yesPeak * 100).toFixed(1) + "¢" : "—"} />
+          <Stat label="UP TROUGH" v={hero.yesTrough != null ? (hero.yesTrough * 100).toFixed(1) + "¢" : "—"} />
           <Stat label="VOLUME" v={window.total_volume != null ? "$" + fmtCompact(window.total_volume) : "—"} />
           <Stat label="TRADERS" v={window.traders != null ? window.traders.toLocaleString() : "—"} />
           <Stat label="TRADES" v={trades.length.toLocaleString()} />
           <Stat
             label={window.resolution ? "RESOLVED" : "OUTCOME"}
-            v={window.resolution || "PENDING"}
+            v={window.resolution === "YES" ? "UP" : window.resolution === "NO" ? "DOWN" : (window.resolution || "PENDING")}
             dir={window.resolution === "YES" ? "up" : window.resolution === "NO" ? "down" : ""}
           />
         </div>
@@ -231,8 +231,8 @@ export function PolyAnalysis({
 
       <div className="pa-legend">
         <span className="label">SHOW</span>
-        <Toggle on={layers.yes} onClick={() => toggle("yes")} color="#22c55e" label="YES" />
-        <Toggle on={layers.no} onClick={() => toggle("no")} color="#ef4444" label="NO" />
+        <Toggle on={layers.yes} onClick={() => toggle("yes")} color="#22c55e" label="UP" />
+        <Toggle on={layers.no} onClick={() => toggle("no")} color="#ef4444" label="DOWN" />
         <Toggle on={layers.base} onClick={() => toggle("base")} color={coin.color || "#fff"} label={`${coin.symbol} PRICE`} />
         <Toggle on={layers.strike} onClick={() => toggle("strike")} color="#fbbf24" label="STRIKE" />
 
@@ -260,10 +260,10 @@ export function PolyAnalysis({
                   {bubblesAllOn ? "HIDE ALL" : "SHOW ALL"}
                 </button>
               </div>
-              <BubbleRow on={layers.yesBuy} onClick={() => toggle("yesBuy")} color="#22c55e" filled label="YES BUY" />
-              <BubbleRow on={layers.yesSell} onClick={() => toggle("yesSell")} color="#22c55e" label="YES SELL" />
-              <BubbleRow on={layers.noBuy} onClick={() => toggle("noBuy")} color="#ef4444" filled label="NO BUY" />
-              <BubbleRow on={layers.noSell} onClick={() => toggle("noSell")} color="#ef4444" label="NO SELL" />
+              <BubbleRow on={layers.yesBuy} onClick={() => toggle("yesBuy")} color="#22c55e" filled label="UP BUY" />
+              <BubbleRow on={layers.yesSell} onClick={() => toggle("yesSell")} color="#22c55e" label="UP SELL" />
+              <BubbleRow on={layers.noBuy} onClick={() => toggle("noBuy")} color="#ef4444" filled label="DOWN BUY" />
+              <BubbleRow on={layers.noSell} onClick={() => toggle("noSell")} color="#ef4444" label="DOWN SELL" />
               <div className="bm-foot mono">Filled = BUY · Ring = SELL · Size = $ traded</div>
             </div>
           )}
@@ -295,10 +295,10 @@ export function PolyAnalysis({
                   {hmAllOn ? "HIDE ALL" : "SHOW ALL"}
                 </button>
               </div>
-              <BubbleRow on={layers.hmYesBuy}  onClick={() => toggle("hmYesBuy")}  color="#22c55e"  filled label="YES BUY" />
-              <BubbleRow on={layers.hmYesSell} onClick={() => toggle("hmYesSell")} color="#86efac"  filled label="YES SELL" />
-              <BubbleRow on={layers.hmNoBuy}   onClick={() => toggle("hmNoBuy")}   color="#ef4444"  filled label="NO BUY" />
-              <BubbleRow on={layers.hmNoSell}  onClick={() => toggle("hmNoSell")}  color="#fca5a5"  filled label="NO SELL" />
+              <BubbleRow on={layers.hmYesBuy}  onClick={() => toggle("hmYesBuy")}  color="#22c55e"  filled label="UP BUY" />
+              <BubbleRow on={layers.hmYesSell} onClick={() => toggle("hmYesSell")} color="#86efac"  filled label="UP SELL" />
+              <BubbleRow on={layers.hmNoBuy}   onClick={() => toggle("hmNoBuy")}   color="#ef4444"  filled label="DOWN BUY" />
+              <BubbleRow on={layers.hmNoSell}  onClick={() => toggle("hmNoSell")}  color="#fca5a5"  filled label="DOWN SELL" />
               <div className="bm-foot mono">Dominant layer painted per cell · ⬤ marks where layers overlap</div>
             </div>
           )}

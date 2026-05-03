@@ -9,11 +9,11 @@ export function OrderStatsRail({ stats }: { stats: OrderStats | null }) {
         {!stats && <div className="mono dim" style={{ fontSize: 11 }}>// no data</div>}
         {stats && (
           <>
-            <Group title="YES">
+            <Group title="UP">
               <Row k="BUY" v={stats.yes_buy_count} sub={"$" + fmtCompact(stats.yes_buy_volume)} color="var(--up)" />
               <Row k="SELL" v={stats.yes_sell_count} sub={"$" + fmtCompact(stats.yes_sell_volume)} color="var(--up)" />
             </Group>
-            <Group title="NO">
+            <Group title="DOWN">
               <Row k="BUY" v={stats.no_buy_count} sub={"$" + fmtCompact(stats.no_buy_volume)} color="var(--down)" />
               <Row k="SELL" v={stats.no_sell_count} sub={"$" + fmtCompact(stats.no_sell_volume)} color="var(--down)" />
             </Group>

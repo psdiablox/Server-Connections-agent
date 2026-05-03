@@ -510,7 +510,7 @@ export function AnalysisChart({
           }}
         >
           <div className="tt-row">
-            <span className={hover.trade.outcome === "YES" ? "up" : "down"}>{hover.trade.outcome}</span>
+            <span className={hover.trade.outcome === "YES" ? "up" : "down"}>{hover.trade.outcome === "YES" ? "UP" : hover.trade.outcome === "NO" ? "DOWN" : hover.trade.outcome}</span>
             <span style={{ marginLeft: 6 }}>{hover.trade.side}</span>
           </div>
           <div className="tt-row mono">{(hover.trade.price * 100).toFixed(2)}¢ · ${(hover.trade.price * hover.trade.size).toFixed(2)}</div>

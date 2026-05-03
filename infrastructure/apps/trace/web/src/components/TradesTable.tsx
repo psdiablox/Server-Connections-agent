@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Trade } from "../api";
-import { fmt } from "../lib/format";
+import { fmt, outcomeLabel } from "../lib/format";
 
 type SortKey = "time" | "outcome" | "side" | "price" | "size" | "value";
 type Dir = "asc" | "desc";
@@ -75,7 +75,7 @@ export function TradesTable({ trades, totalCount }: { trades: Trade[]; totalCoun
         {sorted.map((t, i) => (
           <div key={i} className="t-row trade-row">
             <div>{new Date(t.t).toISOString().slice(11, 19)}</div>
-            <div className={t.outcome === "YES" ? "up" : "down"}>{t.outcome}</div>
+            <div className={t.outcome === "YES" ? "up" : "down"}>{outcomeLabel(t.outcome)}</div>
             <div>{t.side}</div>
             <div style={{ textAlign: "right" }}>{(t.price * 100).toFixed(2)}¢</div>
             <div style={{ textAlign: "right" }}>${fmt(t.price * t.size, 2)}</div>

@@ -98,8 +98,8 @@ export function PolyWindows({
         </div>
         <div className="pw-segment">
           <span className="mono dim" style={{ fontSize: 10, marginRight: 4 }}>RESOLVED</span>
-          {(["all", "yes", "no"] as const).map((s) => (
-            <button key={s} className={"btn tiny " + (resFilter === s ? "active" : "ghost")} onClick={() => setResFilter(s)}>{s.toUpperCase()}</button>
+          {([{ id: "all", label: "ALL" }, { id: "yes", label: "UP" }, { id: "no", label: "DOWN" }] as const).map((s) => (
+            <button key={s.id} className={"btn tiny " + (resFilter === s.id ? "active" : "ghost")} onClick={() => setResFilter(s.id as "all" | "yes" | "no")}>{s.label}</button>
           ))}
         </div>
         <div className="pw-segment" style={{ marginLeft: "auto" }}>
@@ -251,7 +251,7 @@ function WindowRow({ w, onPick }: { w: WindowSummary; onPick: (w: WindowSummary)
       </div>
       <div>
         {result
-          ? <span className={`pw-res ${result.toLowerCase()}`}>{result}</span>
+          ? <span className={`pw-res ${result.toLowerCase()}`}>{result === "YES" ? "UP" : "DOWN"}</span>
           : <span className="pw-res pending">{w.status === "ended" ? "—" : "PENDING"}</span>}
       </div>
       <div style={{ color: "var(--fg-3)", textAlign: "right" }}>→</div>
