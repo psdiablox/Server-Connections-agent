@@ -256,7 +256,8 @@ export function PolyAnalysis({
 
         /* Bubble dropdown */
         .bubble-menu-wrap { position: relative; }
-        .bubble-trigger { display: inline-flex; align-items: center; gap: 8px; padding-right: 8px !important; }
+        .bubble-trigger { display: inline-flex; align-items: center; gap: 8px; padding-right: 8px !important; color: var(--fg-0); }
+        .bubble-trigger.off { color: var(--fg-0); opacity: 1; text-decoration: none; }
         .bubble-glyph { display: inline-flex; gap: 2px; align-items: center; }
         .bg-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
         .bg-dot.ring { background: transparent !important; border: 1.5px solid; }
