@@ -6,11 +6,16 @@ export type ChartLayers = {
   no: boolean;
   base: boolean;
   strike: boolean;
-  heatmap: boolean;
+  // Trade-bubble sub-toggles
   yesBuy: boolean;
   yesSell: boolean;
   noBuy: boolean;
   noSell: boolean;
+  // Order-accumulation heatmap sub-toggles
+  hmYesBuy: boolean;
+  hmYesSell: boolean;
+  hmNoBuy: boolean;
+  hmNoSell: boolean;
   volume: boolean;
 };
 
@@ -123,35 +128,56 @@ export function AnalysisChart({
       .join(" ");
   }, [ticks, yBase, t0, dt]);
 
-  // Heatmap underlay
+  // Heatmap — 4 independent layers. Per cell, we paint the dominant layer's
+  // colour shaded by intensity. If a second layer has >= 30% of dominant
+  // density at that cell, we drop a small white dot — overlap is visible
+  // without muddling colours.
+  const anyHeatmap = layers.hmYesBuy || layers.hmYesSell || layers.hmNoBuy || layers.hmNoSell;
   const cells = useMemo(() => {
-    if (!heatmap || !layers.heatmap) return null;
+    if (!heatmap || !anyHeatmap) return null;
+    const visible: { grid: number[][]; rgb: string }[] = [];
+    if (layers.hmYesBuy)  visible.push({ grid: heatmap.yes_buy,  rgb: "34,197,94"   });
+    if (layers.hmYesSell) visible.push({ grid: heatmap.yes_sell, rgb: "134,239,172" });
+    if (layers.hmNoBuy)   visible.push({ grid: heatmap.no_buy,   rgb: "239,68,68"   });
+    if (layers.hmNoSell)  visible.push({ grid: heatmap.no_sell,  rgb: "252,165,165" });
+    if (!visible.length) return null;
+
     const cellW = innerW / heatmap.buckets;
     const cellH = innerH / heatmap.levels;
     let max = 0;
-    for (const row of heatmap.grid) for (const v of row) if (v > max) max = v;
+    for (const layer of visible) for (const row of layer.grid) for (const v of row) if (v > max) max = v;
     if (max <= 0) return null;
+
+    const OVERLAP_RATIO = 0.3;
     const out: JSX.Element[] = [];
     for (let l = 0; l < heatmap.levels; l++) {
       for (let b = 0; b < heatmap.buckets; b++) {
-        const v = heatmap.grid[l][b];
-        if (v <= 0) continue;
-        const op = Math.min(0.85, v / max);
+        let domV = 0, domRgb = "0,0,0", secondV = 0;
+        for (const layer of visible) {
+          const v = layer.grid[l][b];
+          if (v > domV) { secondV = domV; domV = v; domRgb = layer.rgb; }
+          else if (v > secondV) { secondV = v; }
+        }
+        if (domV <= 0) continue;
+        const op = Math.min(0.85, domV / max);
         if (op < 0.04) continue;
+        const x = M.left + b * cellW;
+        const y = M.top + innerH - (l + 1) * cellH;
         out.push(
-          <rect
-            key={`${l}-${b}`}
-            x={M.left + b * cellW}
-            y={M.top + innerH - (l + 1) * cellH}
-            width={cellW}
-            height={cellH}
-            fill={`rgba(155,109,255,${op})`}
-          />
+          <rect key={`c${l}-${b}`} x={x} y={y} width={cellW} height={cellH}
+            fill={`rgba(${domRgb},${op})`} />
         );
+        if (secondV > 0 && secondV / domV >= OVERLAP_RATIO) {
+          const r = Math.max(0.6, Math.min(cellW, cellH) * 0.18);
+          out.push(
+            <circle key={`m${l}-${b}`} cx={x + cellW / 2} cy={y + cellH / 2} r={r}
+              fill="rgba(255,255,255,0.7)" />
+          );
+        }
       }
     }
     return out;
-  }, [heatmap, layers.heatmap, innerW, innerH]);
+  }, [heatmap, anyHeatmap, layers.hmYesBuy, layers.hmYesSell, layers.hmNoBuy, layers.hmNoSell, innerW, innerH]);
 
   // Bubbles — filtered by the four sub-toggles (yesBuy / yesSell / noBuy / noSell)
   const anyBubble = layers.yesBuy || layers.yesSell || layers.noBuy || layers.noSell;
@@ -301,7 +327,7 @@ export function AnalysisChart({
           </clipPath>
         </defs>
 
-        {layers.heatmap && cells}
+        {anyHeatmap && cells}
 
         {/* Outage bands — under everything else so the data still reads */}
         {visibleOutages.map((v, i) => (

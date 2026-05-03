@@ -25,17 +25,26 @@ export function PolyAnalysis({
   const [stats, setStats] = useState<OrderStats | null>(null);
   const [outages, setOutages] = useState<Outage[]>([]);
   const [layers, setLayers] = useState<ChartLayers>({
-    yes: true, no: true, base: true, strike: true, heatmap: true,
+    yes: true, no: true, base: true, strike: true,
     yesBuy: true, yesSell: true, noBuy: true, noSell: true,
+    hmYesBuy: true, hmYesSell: true, hmNoBuy: true, hmNoSell: true,
     volume: true,
   });
   const toggle = (k: keyof ChartLayers) => setLayers((v) => ({ ...v, [k]: !v[k] }));
+
   const [bubblesOpen, setBubblesOpen] = useState(false);
   const setAllBubbles = (on: boolean) =>
     setLayers((v) => ({ ...v, yesBuy: on, yesSell: on, noBuy: on, noSell: on }));
   const bubblesAllOn = layers.yesBuy && layers.yesSell && layers.noBuy && layers.noSell;
   const bubblesAnyOn = layers.yesBuy || layers.yesSell || layers.noBuy || layers.noSell;
   const bubblesOnCount = [layers.yesBuy, layers.yesSell, layers.noBuy, layers.noSell].filter(Boolean).length;
+
+  const [hmOpen, setHmOpen] = useState(false);
+  const setAllHm = (on: boolean) =>
+    setLayers((v) => ({ ...v, hmYesBuy: on, hmYesSell: on, hmNoBuy: on, hmNoSell: on }));
+  const hmAllOn = layers.hmYesBuy && layers.hmYesSell && layers.hmNoBuy && layers.hmNoSell;
+  const hmAnyOn = layers.hmYesBuy || layers.hmYesSell || layers.hmNoBuy || layers.hmNoSell;
+  const hmOnCount = [layers.hmYesBuy, layers.hmYesSell, layers.hmNoBuy, layers.hmNoSell].filter(Boolean).length;
 
   // Zoom: visible window range as fraction of full [0..1].
   const [zoom, setZoom] = useState<{ a: number; b: number }>({ a: 0, b: 1 });
@@ -180,7 +189,39 @@ export function PolyAnalysis({
         </div>
 
         <Toggle on={layers.volume} onClick={() => toggle("volume")} color="#b8bfcc" label="VOLUME" />
-        <Toggle on={layers.heatmap} onClick={() => toggle("heatmap")} color="#9b6dff" label="ORDER ACCUMULATION" />
+
+        {/* Order accumulation dropdown — same UX as TRADE BUBBLES */}
+        <div className="bubble-menu-wrap">
+          <button
+            className={"leg-toggle bubble-trigger " + (hmAnyOn ? "on" : "off")}
+            onClick={() => setHmOpen((o) => !o)}
+          >
+            <span className="bubble-glyph">
+              <span className="bg-dot" style={{ background: "#22c55e" }}></span>
+              <span className="bg-dot" style={{ background: "#86efac" }}></span>
+              <span className="bg-dot" style={{ background: "#ef4444" }}></span>
+              <span className="bg-dot" style={{ background: "#fca5a5" }}></span>
+            </span>
+            ORDER ACCUMULATION
+            <span className="bubble-count mono">{hmOnCount}/4</span>
+            <span className="caret">{hmOpen ? "▴" : "▾"}</span>
+          </button>
+          {hmOpen && (
+            <div className="bubble-menu">
+              <div className="bm-head mono">
+                <span>HEATMAP LAYERS</span>
+                <button className="bm-allbtn" onClick={() => setAllHm(!hmAllOn)}>
+                  {hmAllOn ? "HIDE ALL" : "SHOW ALL"}
+                </button>
+              </div>
+              <BubbleRow on={layers.hmYesBuy}  onClick={() => toggle("hmYesBuy")}  color="#22c55e"  filled label="YES BUY" />
+              <BubbleRow on={layers.hmYesSell} onClick={() => toggle("hmYesSell")} color="#86efac"  filled label="YES SELL" />
+              <BubbleRow on={layers.hmNoBuy}   onClick={() => toggle("hmNoBuy")}   color="#ef4444"  filled label="NO BUY" />
+              <BubbleRow on={layers.hmNoSell}  onClick={() => toggle("hmNoSell")}  color="#fca5a5"  filled label="NO SELL" />
+              <div className="bm-foot mono">Dominant layer painted per cell · ⬤ marks where layers overlap</div>
+            </div>
+          )}
+        </div>
 
         {/* Zoom controls — same row as the SHOW toggles */}
         <div className="pa-zoom">

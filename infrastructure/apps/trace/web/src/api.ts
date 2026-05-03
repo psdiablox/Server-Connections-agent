@@ -68,7 +68,10 @@ export type Heatmap = {
   buckets: number;
   starts_at: string;
   ends_at: string;
-  grid: number[][];
+  yes_buy: number[][];
+  yes_sell: number[][];
+  no_buy: number[][];
+  no_sell: number[][];
 };
 
 export type Outage = {
@@ -146,8 +149,8 @@ export const api = {
   market: (id: number) => req<Market>(`/markets/${id}`),
   ticks: (id: number, bucket = 5) => req<Tick[]>(`/markets/${id}/ticks?bucket=${bucket}`),
   trades: (id: number, limit = 2000) => req<Trade[]>(`/markets/${id}/trades?limit=${limit}`),
-  heatmap: (id: number, levels = 80, buckets = 80, outcome = "YES") =>
-    req<Heatmap>(`/markets/${id}/book/heatmap?levels=${levels}&buckets=${buckets}&outcome=${outcome}`),
+  heatmap: (id: number, levels = 80, buckets = 80) =>
+    req<Heatmap>(`/markets/${id}/book/heatmap?levels=${levels}&buckets=${buckets}`),
   orderStats: (id: number) => req<OrderStats>(`/markets/${id}/order-stats`),
   outages: (id: number) => req<Outage[]>(`/markets/${id}/outages`),
 };

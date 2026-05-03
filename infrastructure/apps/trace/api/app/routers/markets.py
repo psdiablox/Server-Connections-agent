@@ -250,60 +250,74 @@ async def get_book_heatmap(
     market_id: int,
     levels: int = Query(80, ge=10, le=200),
     buckets: int = Query(80, ge=10, le=200),
-    outcome: str = Query("YES"),
 ) -> HeatmapResponse:
-    """Pre-bin book_snapshots into a (levels x buckets) grid of total resting size.
+    """Per-side, per-outcome resting-depth heatmap. Returns four (levels x buckets)
+    grids — total resting order size at each price level for each time bucket:
+
+      yes_buy  = bids on the YES token
+      yes_sell = asks on the YES token
+      no_buy   = bids on the NO  token
+      no_sell  = asks on the NO  token
+
     Price levels span 0..1 (probability). Time buckets span [starts_at, ends_at]."""
     m = await _load_market(market_id)
     outcomes = await _load_outcomes(market_id)
-    outcome_id = _outcome_id_by_label(outcomes, outcome.upper())
-    if outcome_id is None or not m["starts_at"] or not m["ends_at"]:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "missing window or outcome")
+    yes_id = _outcome_id_by_label(outcomes, "YES")
+    no_id = _outcome_id_by_label(outcomes, "NO")
+    if not m["starts_at"] or not m["ends_at"] or (yes_id is None and no_id is None):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "missing window or outcomes")
 
     starts_at: datetime = m["starts_at"]
     ends_at: datetime = m["ends_at"]
     span_seconds = max(1.0, (ends_at - starts_at).total_seconds())
     bucket_seconds = span_seconds / buckets
 
+    yes_buy = [[0.0] * buckets for _ in range(levels)]
+    yes_sell = [[0.0] * buckets for _ in range(levels)]
+    no_buy = [[0.0] * buckets for _ in range(levels)]
+    no_sell = [[0.0] * buckets for _ in range(levels)]
+
+    outcome_ids = [oid for oid in (yes_id, no_id) if oid is not None]
     async with pool().acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT ts, bids, asks
+            SELECT outcome_id, ts, bids, asks
             FROM polymarket.book_snapshots
-            WHERE market_id = $1 AND outcome_id = $2
+            WHERE market_id = $1
+              AND outcome_id = ANY($2::bigint[])
               AND ts >= $3 AND ts <= $4
             ORDER BY ts
             """,
-            market_id,
-            outcome_id,
-            starts_at,
-            ends_at,
+            market_id, outcome_ids, starts_at, ends_at,
         )
 
-    grid: list[list[float]] = [[0.0] * buckets for _ in range(levels)]
     for r in rows:
         ts: datetime = r["ts"]
         bucket_idx = min(buckets - 1, int((ts - starts_at).total_seconds() / bucket_seconds))
         if bucket_idx < 0:
             continue
-        for side in ("bids", "asks"):
-            for entry in r[side] or []:
-                try:
-                    price = float(entry[0])
-                    size = float(entry[1])
-                except (TypeError, ValueError, IndexError):
-                    continue
-                if not (0.0 <= price <= 1.0):
-                    continue
-                lvl = min(levels - 1, int(price * levels))
-                grid[lvl][bucket_idx] += size
+        is_yes = r["outcome_id"] == yes_id
+        bids_grid = yes_buy if is_yes else no_buy
+        asks_grid = yes_sell if is_yes else no_sell
+        for entry in r["bids"] or []:
+            try:
+                price = float(entry[0]); size = float(entry[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if 0.0 <= price <= 1.0:
+                bids_grid[min(levels - 1, int(price * levels))][bucket_idx] += size
+        for entry in r["asks"] or []:
+            try:
+                price = float(entry[0]); size = float(entry[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if 0.0 <= price <= 1.0:
+                asks_grid[min(levels - 1, int(price * levels))][bucket_idx] += size
 
     return HeatmapResponse(
-        levels=levels,
-        buckets=buckets,
-        starts_at=starts_at,
-        ends_at=ends_at,
-        grid=grid,
+        levels=levels, buckets=buckets,
+        starts_at=starts_at, ends_at=ends_at,
+        yes_buy=yes_buy, yes_sell=yes_sell, no_buy=no_buy, no_sell=no_sell,
     )
 
 

@@ -127,7 +127,10 @@ class HeatmapResponse(BaseModel):
     buckets: int
     starts_at: datetime
     ends_at: datetime
-    grid: list[list[float]]
+    yes_buy: list[list[float]]
+    yes_sell: list[list[float]]
+    no_buy: list[list[float]]
+    no_sell: list[list[float]]
 
 
 class Outage(BaseModel):
