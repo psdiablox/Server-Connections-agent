@@ -48,6 +48,22 @@ export function PolyAnalysis({
   const hmAnyOn = layers.hmYesBuy || layers.hmYesSell || layers.hmNoBuy || layers.hmNoSell;
   const hmOnCount = [layers.hmYesBuy, layers.hmYesSell, layers.hmNoBuy, layers.hmNoSell].filter(Boolean).length;
 
+  // Master visibility — flips every layer on/off in one click.
+  const allLayerKeys: (keyof ChartLayers)[] = [
+    "yes", "no", "base", "strike",
+    "yesBuy", "yesSell", "noBuy", "noSell",
+    "hmYesBuy", "hmYesSell", "hmNoBuy", "hmNoSell",
+    "volume",
+  ];
+  const anyLayerOn = allLayerKeys.some((k) => layers[k]);
+  const setAllLayers = (on: boolean) => {
+    setLayers((v) => {
+      const next = { ...v };
+      for (const k of allLayerKeys) next[k] = on;
+      return next;
+    });
+  };
+
   const [downloadOpen, setDownloadOpen] = useState(false);
   const downloadAll = () => {
     [`/api/markets/${window.id}/export/trades`,
@@ -288,6 +304,15 @@ export function PolyAnalysis({
           )}
         </div>
 
+        {/* Master show/hide toggle — flips every chart layer */}
+        <button
+          className="btn tiny ghost pa-master"
+          onClick={() => setAllLayers(!anyLayerOn)}
+          title={anyLayerOn ? "Hide all chart layers" : "Show all chart layers"}
+        >
+          {anyLayerOn ? "HIDE ALL" : "SHOW ALL"}
+        </button>
+
         {/* Zoom controls — same row as the SHOW toggles */}
         <div className="pa-zoom">
           <span className="label">ZOOM</span>
@@ -382,9 +407,13 @@ export function PolyAnalysis({
         .leg-toggle.off { opacity: 0.4; text-decoration: line-through; }
         .leg-toggle .swatch { width: 14px; height: 2px; }
         .pa-trades-strip { border-top: 1px solid var(--line); flex-shrink: 0; height: 240px; }
+        .pa-master {
+          margin-left: auto;
+          font-family: var(--font-mono);
+          letter-spacing: 0.06em;
+        }
         .pa-zoom {
           display: inline-flex; align-items: center; gap: 4px;
-          margin-left: auto;
           /* Align with chart right edge — pull left by the rail width so the
              zoom buttons sit above the graph, not above ORDER STATS. */
           margin-right: 340px;
