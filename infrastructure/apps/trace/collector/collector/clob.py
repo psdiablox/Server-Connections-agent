@@ -37,6 +37,11 @@ SOURCE = "polymarket-clob"
 #   outcome_id -> {market_id, best_bid, best_ask, mid, last, last_event_ts}
 _latest_state: dict[int, dict] = {}
 
+# Monotonic timestamp updated at the top of every clob_loop iteration. The
+# liveness watchdog in main.py reads this to detect a wedged loop and force
+# a process restart. NEVER reset to 0 mid-flight.
+clob_iteration_ts: float = 0.0
+
 log = logging.getLogger("trace.clob")
 
 SUBSCRIPTION_GRACE = timedelta(minutes=2)
@@ -403,47 +408,61 @@ async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
         result = "error"
         hb_reason = f"polymarket ws crashed: {type(e).__name__}: {e}"
     finally:
-        # Watchdog
-        watchdog_stop.set()
-        if watchdog_task is not None:
+        # Cleanup with a HARD upper bound. We never `await` a cancelled task
+        # without a timeout — earlier code blocked on a hung asyncpg cancel
+        # inside the watchdog/hz tasks and wedged the entire clob_loop. Now
+        # any task that doesn't finish within the budget is fire-and-forget
+        # cancelled; it may linger as a zombie but the loop moves on. The
+        # process-level liveness watchdog in main.py is the final safety.
+        async def _drop_task(task: asyncio.Task, name: str, budget: float) -> None:
+            if task is None or task.done():
+                return
+            task.cancel()
             try:
-                await asyncio.wait_for(watchdog_task, timeout=2)
+                await asyncio.wait_for(asyncio.shield(task), timeout=budget)
             except asyncio.TimeoutError:
-                watchdog_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await watchdog_task
-            except Exception:
-                log.exception("watchdog cleanup error")
-        # Tear down hz emitter — properly await even when cancelled.
+                log.warning("%s did not cancel within %.1fs — abandoning", name, budget)
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        watchdog_stop.set()
         hz_stop.set()
+        await _drop_task(watchdog_task, "resub-watchdog", 2.0)
+        await _drop_task(hz_task, "hz-emitter", 2.0)
+        # Heartbeat: cancel with bounded wait, then write the down marker
+        # outside the cancel path so a stuck heartbeat task can't block this.
         try:
-            await asyncio.wait_for(hz_task, timeout=3)
-        except asyncio.TimeoutError:
-            hz_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await hz_task
+            if hb._task is not None:
+                hb._task.cancel()
+                try:
+                    await asyncio.wait_for(asyncio.shield(hb._task), timeout=1.5)
+                except asyncio.TimeoutError:
+                    log.warning("heartbeat task did not cancel — abandoning")
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if hb_reason is not None:
+                try:
+                    await asyncio.wait_for(emit_health(SOURCE, "down", hb_reason), timeout=2.0)
+                except (asyncio.TimeoutError, Exception):
+                    log.warning("could not write 'down' heartbeat (non-fatal)")
         except Exception:
-            log.exception("hz_task cleanup error")
-        # Final heartbeat row
-        try:
-            await asyncio.wait_for(hb.stop(hb_reason), timeout=3)
-        except (asyncio.TimeoutError, Exception):
-            log.exception("heartbeat stop timeout/error (non-fatal)")
+            log.exception("heartbeat cleanup error (non-fatal)")
 
     log.info("clob session ended (%s) | %s", result, stats)
     return result
 
 
 async def clob_loop(market_signal: asyncio.Event) -> None:
-    """Refresh subscription set once per session bound. New markets discovered
-    mid-session are picked up on the next refresh (≤5 min). market_signal is
-    no longer used for hot reconnects — it caused storms.
-
-    Wraps each iteration in try/except so a stuck or crashing _session can
-    never silently kill the whole loop. The collector keeps running."""
+    """Refresh subscription set once per session bound. Updates
+    clob_iteration_ts at the top of every iteration so the liveness
+    watchdog in main.py can detect a wedge and force-restart the
+    process if we ever get stuck inside _session()."""
+    global clob_iteration_ts
     log.info("clob loop starting")
+    clob_iteration_ts = time.monotonic()
     backoff = 1.0
     while True:
+        clob_iteration_ts = time.monotonic()
         try:
             outcomes = await asyncio.wait_for(_active_outcomes(), timeout=10)
             if not outcomes:
