@@ -212,6 +212,7 @@ async def _on_last_trade(token_to_outcome: dict, msg: dict, stats: dict) -> None
 
 
 FRESH_DATA_WINDOW = timedelta(seconds=15)
+EMITTER_POLL = 0.1  # how often the 1 Hz emitter wakes to check the wall clock
 
 
 async def _resubscribe_watchdog(
@@ -292,34 +293,51 @@ async def _resubscribe_watchdog(
 
 
 async def _hz_price_emitter(stop: asyncio.Event) -> None:
-    """Writes one price_snapshots row per active outcome every second — but
-    ONLY for outcomes whose last book/trade event arrived within the last
-    FRESH_DATA_WINDOW seconds. This ensures stale state (e.g. when Polymarket
-    silently drops a market subscription mid-window) shows up as a gap in
-    price_snapshots, which the /outages endpoint then surfaces on the chart."""
+    """Writes one price_snapshots row per active outcome per WALL-CLOCK SECOND.
+
+    Wakes every EMITTER_POLL (0.1 s) and checks: 'has the current wall-clock
+    second changed since my last emit?' If yes, build rows for the new second.
+    Rows are stamped at the second-boundary (XX:XX:XX.000) so the resulting
+    series is a clean per-second grid regardless of when the emit fired
+    inside that second. DB insert latency just delays *when* the row lands;
+    its ts is correct.
+
+    Skips outcomes whose last_event_ts is older than FRESH_DATA_WINDOW, so
+    stale subscriptions still produce real gaps for outage detection."""
+    last_emitted_sec: Optional[int] = None
     while not stop.is_set():
         try:
-            await asyncio.wait_for(stop.wait(), timeout=1.0)
+            await asyncio.wait_for(stop.wait(), timeout=EMITTER_POLL)
             return
         except asyncio.TimeoutError:
             pass
-        if not _latest_state:
-            continue
+
         now = datetime.now(tz=timezone.utc)
+        current_sec = int(now.timestamp())
+        if current_sec == last_emitted_sec:
+            continue  # already emitted for this wall-clock second
+        if not _latest_state:
+            last_emitted_sec = current_sec
+            continue
+
+        # Stamp at the second-boundary, not at sub-second now().
+        ts_for_row = datetime.fromtimestamp(current_sec, tz=timezone.utc)
         rows = []
         for oid, s in list(_latest_state.items()):
             if s.get("market_id") is None:
                 continue
             last_event = s.get("last_event_ts")
             if last_event is None or (now - last_event) > FRESH_DATA_WINDOW:
-                continue  # stale — let it become a real gap
+                continue  # stale → real gap
             rows.append((
-                s["market_id"], oid, now,
+                s["market_id"], oid, ts_for_row,
                 s.get("best_bid"), s.get("best_ask"),
                 s.get("mid"), s.get("last"),
             ))
         if not rows:
+            last_emitted_sec = current_sec
             continue
+
         try:
             async with pool().acquire() as conn:
                 await conn.executemany(
@@ -329,8 +347,10 @@ async def _hz_price_emitter(stop: asyncio.Event) -> None:
                        ON CONFLICT DO NOTHING""",
                     rows,
                 )
+            last_emitted_sec = current_sec
         except Exception:
             log.exception("hz emitter insert error")
+            # don't update last_emitted_sec — retry on the next poll
 
 
 async def _session(token_to_outcome: dict, token_ids: list[str]) -> str:
