@@ -251,15 +251,24 @@ async def get_book_heatmap(
     levels: int = Query(80, ge=10, le=200),
     buckets: int = Query(80, ge=10, le=200),
 ) -> HeatmapResponse:
-    """Per-side, per-outcome resting-depth heatmap. Returns four (levels x buckets)
-    grids — total resting order size at each price level for each time bucket:
+    """Time-weighted, per-side, per-outcome resting-depth heatmap.
 
+    Each book_snapshot's state is treated as in-effect from its own timestamp
+    until the next snapshot's timestamp (or window end). For each (level,
+    bucket) cell, a snapshot's resting size at that level contributes
+    `size * overlap_seconds` where overlap is the time the state was in
+    effect inside that bucket.
+
+    This decouples cell brightness from snapshot frequency: a $100 ask
+    sitting at 30¢ for 60 s contributes 6,000 size-seconds whether 5 or 500
+    snapshots covered the minute.
+
+    Returns four grids (levels x buckets), units = size-seconds:
       yes_buy  = bids on the YES token
       yes_sell = asks on the YES token
       no_buy   = bids on the NO  token
       no_sell  = asks on the NO  token
-
-    Price levels span 0..1 (probability). Time buckets span [starts_at, ends_at]."""
+    """
     m = await _load_market(market_id)
     outcomes = await _load_outcomes(market_id)
     yes_id = _outcome_id_by_label(outcomes, "YES")
@@ -286,33 +295,64 @@ async def get_book_heatmap(
             WHERE market_id = $1
               AND outcome_id = ANY($2::bigint[])
               AND ts >= $3 AND ts <= $4
-            ORDER BY ts
+            ORDER BY outcome_id, ts
             """,
             market_id, outcome_ids, starts_at, ends_at,
         )
 
+    # Group rows by outcome (already ordered by outcome_id, ts in the SQL).
+    by_outcome: dict[int, list] = {}
     for r in rows:
-        ts: datetime = r["ts"]
-        bucket_idx = min(buckets - 1, int((ts - starts_at).total_seconds() / bucket_seconds))
-        if bucket_idx < 0:
-            continue
-        is_yes = r["outcome_id"] == yes_id
+        by_outcome.setdefault(r["outcome_id"], []).append(r)
+
+    for outcome_id, snaps in by_outcome.items():
+        is_yes = outcome_id == yes_id
         bids_grid = yes_buy if is_yes else no_buy
         asks_grid = yes_sell if is_yes else no_sell
-        for entry in r["bids"] or []:
-            try:
-                price = float(entry[0]); size = float(entry[1])
-            except (TypeError, ValueError, IndexError):
+
+        for i, snap in enumerate(snaps):
+            # The book state from this snapshot is in effect until the next
+            # snapshot's ts (or window end for the last one).
+            state_start = max(snap["ts"], starts_at)
+            state_end_raw = snaps[i + 1]["ts"] if i + 1 < len(snaps) else ends_at
+            state_end = min(state_end_raw, ends_at)
+            if state_end <= state_start:
                 continue
-            if 0.0 <= price <= 1.0:
-                bids_grid[min(levels - 1, int(price * levels))][bucket_idx] += size
-        for entry in r["asks"] or []:
-            try:
-                price = float(entry[0]); size = float(entry[1])
-            except (TypeError, ValueError, IndexError):
-                continue
-            if 0.0 <= price <= 1.0:
-                asks_grid[min(levels - 1, int(price * levels))][bucket_idx] += size
+
+            # Buckets that overlap this state's [state_start, state_end].
+            start_b = max(0, int((state_start - starts_at).total_seconds() / bucket_seconds))
+            end_b = min(buckets - 1, int((state_end - starts_at).total_seconds() / bucket_seconds))
+
+            # Pre-extract level/size pairs once per snap (avoid reparsing per bucket).
+            bid_levels: list[tuple[int, float]] = []
+            for entry in snap["bids"] or []:
+                try:
+                    price = float(entry[0]); size = float(entry[1])
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if 0.0 <= price <= 1.0:
+                    bid_levels.append((min(levels - 1, int(price * levels)), size))
+            ask_levels: list[tuple[int, float]] = []
+            for entry in snap["asks"] or []:
+                try:
+                    price = float(entry[0]); size = float(entry[1])
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if 0.0 <= price <= 1.0:
+                    ask_levels.append((min(levels - 1, int(price * levels)), size))
+
+            for b in range(start_b, end_b + 1):
+                bucket_start = starts_at + timedelta(seconds=b * bucket_seconds)
+                bucket_end = starts_at + timedelta(seconds=(b + 1) * bucket_seconds)
+                overlap_start = max(state_start, bucket_start)
+                overlap_end = min(state_end, bucket_end)
+                overlap_secs = (overlap_end - overlap_start).total_seconds()
+                if overlap_secs <= 0:
+                    continue
+                for lvl, size in bid_levels:
+                    bids_grid[lvl][b] += size * overlap_secs
+                for lvl, size in ask_levels:
+                    asks_grid[lvl][b] += size * overlap_secs
 
     return HeatmapResponse(
         levels=levels, buckets=buckets,
