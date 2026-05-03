@@ -33,30 +33,23 @@ async def collector_health(response: Response) -> dict:
             WHERE n.slug='polymarket' AND m.status='live'
             """
         )
-        last_trade = await conn.fetchval(
-            "SELECT max(ts) FROM polymarket.trades"
-        )
-        last_book = await conn.fetchval(
-            "SELECT max(ts) FROM polymarket.book_snapshots"
-        )
-        last_coin = await conn.fetchval(
-            "SELECT max(ts) FROM polymarket.coin_prices"
+        last_trade = await conn.fetchval("SELECT max(ts) FROM polymarket.trades")
+        last_book = await conn.fetchval("SELECT max(ts) FROM polymarket.book_snapshots")
+        last_coin = await conn.fetchval("SELECT max(ts) FROM polymarket.coin_prices")
+        recent_trades = await conn.fetchval(
+            "SELECT count(*) FROM polymarket.trades WHERE ts > $1", cutoff
         )
 
-    last_event = max(t for t in (last_trade, last_book, last_coin) if t is not None) \
-        if any((last_trade, last_book, last_coin)) else None
-
-    body = {
+    body: dict = {
         "ok": True,
         "live_markets": int(live or 0),
         "last_trade_at": last_trade.isoformat() if last_trade else None,
         "last_book_at": last_book.isoformat() if last_book else None,
         "last_coin_price_at": last_coin.isoformat() if last_coin else None,
+        "recent_trades_90s": int(recent_trades or 0),
         "now": now.isoformat(),
     }
 
-    # Coin-price stream from Binance should ALWAYS be flowing. Treat extended
-    # silence there as a hard fault regardless of polymarket activity.
     if last_coin is None or last_coin < cutoff:
         body["ok"] = False
         body["reason"] = "binance ws silent — no btc price snapshot in 90s"
@@ -64,26 +57,20 @@ async def collector_health(response: Response) -> dict:
         return body
 
     if (live or 0) > 0:
-        # If a market is live, polymarket data MUST be flowing.
         last_pm = max((t for t in (last_trade, last_book) if t is not None), default=None)
         if last_pm is None or last_pm < cutoff:
             body["ok"] = False
             body["reason"] = (
-                "live polymarket market but no trade/book insert in "
-                f"{SILENCE_BUDGET_SECONDS}s — possible WS or DB issue"
+                f"live polymarket market but no trade/book insert in "
+                f"{SILENCE_BUDGET_SECONDS}s — WS or DB issue"
             )
             response.status_code = 503
             return body
-        # Even with a live market, if there are no trades AT ALL recently it's
-        # suspicious — Polymarket BTC 5-min markets always trade.
-        recent_trades = await conn.fetchval(
-            "SELECT count(*) FROM polymarket.trades WHERE ts > $1", cutoff
-        ) if (response.status_code or 200) < 400 else 0
-        if (recent_trades or 0) == 0:
+        if int(recent_trades or 0) == 0:
             body["ok"] = False
             body["reason"] = (
                 f"live market with zero trades in {SILENCE_BUDGET_SECONDS}s — "
-                "look for upstream / network issue"
+                "Polymarket BTC 5-min markets always trade; check upstream"
             )
             response.status_code = 503
             return body
