@@ -68,7 +68,7 @@ export function PolyAnalysis({
       api.market(window.id),
       api.ticks(window.id, 5),
       api.trades(window.id, 2000),
-      api.heatmap(window.id, 80, 80, "YES").catch(() => null),
+      api.heatmap(window.id, 80, 80).catch(() => null),
       api.orderStats(window.id),
       api.outages(window.id).catch(() => []),
     ])
