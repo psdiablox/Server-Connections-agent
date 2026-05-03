@@ -86,6 +86,10 @@ class WindowSummary(BaseModel):
     traders: Optional[int]
     last_yes: Optional[float]
     last_no: Optional[float]
+    trade_count: Optional[int] = None
+    largest_trade: Optional[float] = None
+    avg_trade: Optional[float] = None
+    close_btc: Optional[float] = None
 
 
 class WindowList(BaseModel):

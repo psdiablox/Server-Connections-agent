@@ -21,6 +21,7 @@ type Props = {
   strike: number | null;
   baseColor: string;
   layers: ChartLayers;
+  zoom: { a: number; b: number };  // visible range as fraction of full window
   height?: number;
 };
 
@@ -43,6 +44,7 @@ export function AnalysisChart({
   strike,
   baseColor,
   layers,
+  zoom,
   height = 560,
 }: Props) {
   const W = 1200;
@@ -53,24 +55,6 @@ export function AnalysisChart({
   const T0 = new Date(startsAt).getTime();
   const T1 = new Date(endsAt).getTime();
   const fullSpan = Math.max(1, T1 - T0);
-
-  // Zoom state: visible range in [0..1] of the full window.
-  const [zoom, setZoom] = useState<{ a: number; b: number }>({ a: 0, b: 1 });
-  const zoomIn = () => setZoom((z) => {
-    const mid = (z.a + z.b) / 2;
-    const w = (z.b - z.a) / 2;
-    return { a: Math.max(0, mid - w / 2), b: Math.min(1, mid + w / 2) };
-  });
-  const zoomOut = () => setZoom((z) => {
-    const mid = (z.a + z.b) / 2;
-    const w = Math.min(1, (z.b - z.a) * 2);
-    let a = Math.max(0, mid - w / 2);
-    let b = Math.min(1, a + w);
-    if (b - a < w) a = Math.max(0, b - w);
-    return { a, b };
-  });
-  const zoomReset = () => setZoom({ a: 0, b: 1 });
-
   const t0 = T0 + fullSpan * zoom.a;
   const t1 = T0 + fullSpan * zoom.b;
   const dt = Math.max(1, t1 - t0);
@@ -290,13 +274,6 @@ export function AnalysisChart({
 
   return (
     <div style={{ position: "relative" }}>
-      {/* Zoom toolbar */}
-      <div className="anal-zoom">
-        <button className="btn tiny ghost" onClick={zoomOut} title="Zoom out">−</button>
-        <button className="btn tiny ghost" onClick={zoomReset} title="Reset zoom">RESET</button>
-        <button className="btn tiny ghost" onClick={zoomIn} title="Zoom in">+</button>
-      </div>
-
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${height}`}
@@ -521,11 +498,6 @@ export function AnalysisChart({
       )}
 
       <style>{`
-        .anal-zoom {
-          position: absolute; top: 8px; right: 8px; z-index: 5;
-          display: flex; gap: 4px; pointer-events: auto;
-        }
-        .anal-zoom .btn { min-width: 26px; }
         .trade-tip {
           background: var(--bg-3);
           border: 1px solid var(--line-3);

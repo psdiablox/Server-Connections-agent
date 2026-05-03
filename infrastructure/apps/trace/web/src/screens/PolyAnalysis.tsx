@@ -29,6 +29,23 @@ export function PolyAnalysis({
   });
   const toggle = (k: keyof ChartLayers) => setLayers((v) => ({ ...v, [k]: !v[k] }));
 
+  // Zoom: visible window range as fraction of full [0..1].
+  const [zoom, setZoom] = useState<{ a: number; b: number }>({ a: 0, b: 1 });
+  const zoomIn = () => setZoom((z) => {
+    const mid = (z.a + z.b) / 2;
+    const w = (z.b - z.a) / 2;
+    return { a: Math.max(0, mid - w / 2), b: Math.min(1, mid + w / 2) };
+  });
+  const zoomOut = () => setZoom((z) => {
+    const mid = (z.a + z.b) / 2;
+    const w = Math.min(1, (z.b - z.a) * 2);
+    let a = Math.max(0, mid - w / 2);
+    let b = Math.min(1, a + w);
+    if (b - a < w) a = Math.max(0, b - w);
+    return { a, b };
+  });
+  const zoomReset = () => setZoom({ a: 0, b: 1 });
+
   useEffect(() => {
     Promise.all([
       api.market(window.id),
@@ -123,6 +140,14 @@ export function PolyAnalysis({
         <Toggle on={layers.bubbles} onClick={() => toggle("bubbles")} color="#9ca3af" label="TRADE BUBBLES" />
         <Toggle on={layers.volume} onClick={() => toggle("volume")} color="#b8bfcc" label="VOLUME" />
         <Toggle on={layers.heatmap} onClick={() => toggle("heatmap")} color="#9b6dff" label="ORDER ACCUMULATION" />
+
+        {/* Zoom controls — same row as the SHOW toggles */}
+        <div className="pa-zoom">
+          <span className="label">ZOOM</span>
+          <button className="btn tiny ghost" onClick={zoomOut} title="Zoom out">−</button>
+          <button className="btn tiny ghost" onClick={zoomReset} title="Reset zoom">RESET</button>
+          <button className="btn tiny ghost" onClick={zoomIn} title="Zoom in">+</button>
+        </div>
       </div>
 
       <div className="anal-grid">
@@ -137,6 +162,7 @@ export function PolyAnalysis({
             strike={window.strike}
             baseColor={coin.color || "#fff"}
             layers={layers}
+            zoom={zoom}
             height={560}
           />
           <div className="pa-trades-strip">
@@ -176,6 +202,9 @@ export function PolyAnalysis({
         .leg-toggle.off { opacity: 0.4; text-decoration: line-through; }
         .leg-toggle .swatch { width: 14px; height: 2px; }
         .pa-trades-strip { border-top: 1px solid var(--line); flex-shrink: 0; height: 240px; }
+        .pa-zoom { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+        .pa-zoom .label { margin-right: 6px; }
+        .pa-zoom .btn { min-width: 28px; }
       `}</style>
     </>
   );

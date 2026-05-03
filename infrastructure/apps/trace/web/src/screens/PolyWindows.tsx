@@ -109,11 +109,12 @@ export function PolyWindows({
           <div>WINDOW (ET)</div>
           <div>LOCAL</div>
           <div className="num">STRIKE</div>
-          <div className="num">YES</div>
-          <div className="num">NO</div>
+          <div className="num">BTC CLOSE</div>
           <div className="num">VOLUME</div>
-          <div className="num">TRADERS</div>
-          <div>RESOLUTION</div>
+          <div className="num">TRADES</div>
+          <div className="num">LARGEST</div>
+          <div className="num">AVG</div>
+          <div>RESULT</div>
           <div></div>
         </div>
         <div className="pw-table-body">
@@ -144,7 +145,7 @@ export function PolyWindows({
         .pw-table-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 16px 32px; background: var(--bg-0); overflow: hidden; }
         .pw-table-head, .pw-row {
           display: grid;
-          grid-template-columns: 90px 230px 200px 80px 70px 70px 110px 90px 110px 50px;
+          grid-template-columns: 80px 200px 170px 90px 90px 90px 60px 80px 80px 90px 30px;
           align-items: center; gap: 12px; padding: 0 14px;
         }
         .pw-table-head { height: 32px; font-size: 9px; color: var(--fg-3); border-bottom: 1px solid var(--line); background: var(--bg-1); }
@@ -176,7 +177,24 @@ export function PolyWindows({
 
 function WindowRow({ w, onPick }: { w: WindowSummary; onPick: (w: WindowSummary) => void }) {
   const local = fmtLocalWindow(w.starts_at, w.ends_at);
-  const yes = w.last_yes ?? 0;
+
+  // Result derivation: prefer the explicit Polymarket resolution; otherwise
+  // for ended markets compare close BTC to strike, falling back to last YES.
+  let result: "YES" | "NO" | null = w.resolution;
+  if (!result && w.status === "ended") {
+    if (w.close_btc != null && w.strike != null) {
+      result = w.close_btc > w.strike ? "YES" : w.close_btc < w.strike ? "NO" : null;
+    } else if (w.last_yes != null) {
+      result = w.last_yes >= 0.5 ? "YES" : "NO";
+    }
+  }
+
+  // BTC close colour: green if it ended above strike, red if below.
+  let closeClass = "";
+  if (w.close_btc != null && w.strike != null) {
+    closeClass = w.close_btc > w.strike ? "pw-yes" : w.close_btc < w.strike ? "pw-no" : "";
+  }
+
   return (
     <div className="pw-row" onClick={() => onPick(w)}>
       <div>
@@ -188,18 +206,17 @@ function WindowRow({ w, onPick }: { w: WindowSummary; onPick: (w: WindowSummary)
       <div>{fmtWindowET(w.starts_at, w.ends_at)} <span style={{ color: "var(--fg-3)", fontSize: 10 }}>ET</span></div>
       <div>{local} <span style={{ color: "var(--fg-3)", fontSize: 10 }}>{localTZ()}</span></div>
       <div className="num">{w.strike != null ? "$" + fmt(w.strike, w.strike < 1 ? 4 : (w.strike < 100 ? 2 : 0)) : "—"}</div>
-      <div className={"num " + (yes >= 0.5 ? "pw-yes" : "pw-no")}>
-        {w.status === "upcoming" || w.last_yes == null ? "—" : (yes * 100).toFixed(1) + "¢"}
-      </div>
-      <div className={"num " + (yes < 0.5 ? "pw-yes" : "pw-no")}>
-        {w.status === "upcoming" || w.last_yes == null ? "—" : ((1 - yes) * 100).toFixed(1) + "¢"}
+      <div className={"num " + closeClass}>
+        {w.close_btc != null ? "$" + fmt(w.close_btc, w.close_btc < 1 ? 4 : (w.close_btc < 100 ? 2 : 0)) : "—"}
       </div>
       <div className="num">{w.total_volume != null ? "$" + fmtCompact(w.total_volume) : "—"}</div>
-      <div className="num">{w.traders != null ? w.traders.toLocaleString() : "—"}</div>
+      <div className="num">{w.trade_count != null ? w.trade_count.toLocaleString() : "—"}</div>
+      <div className="num">{w.largest_trade != null ? "$" + fmtCompact(w.largest_trade) : "—"}</div>
+      <div className="num">{w.avg_trade != null ? "$" + fmt(w.avg_trade, 2) : "—"}</div>
       <div>
-        {w.resolution
-          ? <span className={`pw-res ${w.resolution.toLowerCase()}`}>{w.resolution}</span>
-          : <span className="pw-res pending">PENDING</span>}
+        {result
+          ? <span className={`pw-res ${result.toLowerCase()}`}>{result}</span>
+          : <span className="pw-res pending">{w.status === "ended" ? "—" : "PENDING"}</span>}
       </div>
       <div style={{ color: "var(--fg-3)", textAlign: "right" }}>→</div>
     </div>

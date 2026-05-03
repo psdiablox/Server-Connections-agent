@@ -150,7 +150,8 @@ async def list_windows(
             f"""
             SELECT m.id, m.external_id, m.starts_at, m.ends_at, m.period_seconds,
                    m.strike, m.status, m.resolution, m.total_volume, m.traders,
-                   m.last_yes, m.last_no
+                   m.last_yes, m.last_no, m.trade_count, m.largest_trade,
+                   m.avg_trade, m.close_btc
             FROM core.markets m
             JOIN core.networks n ON n.id = m.network_id
             JOIN core.coins c ON c.id = m.coin_id
@@ -194,6 +195,10 @@ async def list_windows(
             traders=r["traders"],
             last_yes=float(r["last_yes"]) if r["last_yes"] is not None else None,
             last_no=float(r["last_no"]) if r["last_no"] is not None else None,
+            trade_count=r["trade_count"],
+            largest_trade=float(r["largest_trade"]) if r["largest_trade"] is not None else None,
+            avg_trade=float(r["avg_trade"]) if r["avg_trade"] is not None else None,
+            close_btc=float(r["close_btc"]) if r["close_btc"] is not None else None,
         )
         for r in rows
     ]

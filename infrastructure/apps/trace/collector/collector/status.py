@@ -69,29 +69,37 @@ async def _set_strike_for_started_markets() -> None:
 
 
 async def _update_aggregates() -> None:
-    """For each market touched in the last status interval window, recompute
-    total_volume / traders / last_yes / last_no."""
+    """For each market touched recently, recompute volume / trade-count /
+    largest-trade / avg-trade / last-yes / last-no / close-btc."""
     async with pool().acquire() as conn:
         market_ids = await conn.fetch(
             """
-            SELECT DISTINCT m.id
+            SELECT DISTINCT m.id, m.starts_at, m.ends_at, m.coin_id
             FROM core.markets m
             JOIN core.networks n ON n.id = m.network_id
             WHERE n.slug='polymarket'
-              AND (m.status IN ('live','ended'))
+              AND m.status IN ('live','ended')
               AND m.updated_at > now() - INTERVAL '1 day'
             """
         )
         for row in market_ids:
             mid = row["id"]
+            window_start = row["starts_at"]
+            window_end = row["ends_at"]
+            coin_id = row["coin_id"]
+
             stats = await conn.fetchrow(
                 """
                 SELECT
                   COALESCE(SUM(price * size), 0) AS volume,
+                  COUNT(*) AS trade_count,
+                  MAX(price * size) AS largest,
+                  AVG(price * size) AS avg_size,
                   COUNT(DISTINCT taker_address) FILTER (WHERE taker_address IS NOT NULL) AS traders
-                FROM polymarket.trades WHERE market_id = $1
+                FROM polymarket.trades
+                WHERE market_id = $1 AND ts >= $2 AND ts <= $3
                 """,
-                mid,
+                mid, window_start, window_end,
             )
             yes_outcome = await conn.fetchval(
                 "SELECT id FROM core.market_outcomes WHERE market_id=$1 AND label='YES'", mid
@@ -100,28 +108,36 @@ async def _update_aggregates() -> None:
                 "SELECT id FROM core.market_outcomes WHERE market_id=$1 AND label='NO'", mid
             )
             last_yes = await conn.fetchval(
-                """
-                SELECT COALESCE(mid, last) FROM polymarket.price_snapshots
-                WHERE market_id=$1 AND outcome_id=$2
-                ORDER BY ts DESC LIMIT 1
-                """,
+                """SELECT COALESCE(mid, last) FROM polymarket.price_snapshots
+                   WHERE market_id=$1 AND outcome_id=$2
+                   ORDER BY ts DESC LIMIT 1""",
                 mid, yes_outcome,
             ) if yes_outcome else None
             last_no = await conn.fetchval(
-                """
-                SELECT COALESCE(mid, last) FROM polymarket.price_snapshots
-                WHERE market_id=$1 AND outcome_id=$2
-                ORDER BY ts DESC LIMIT 1
-                """,
+                """SELECT COALESCE(mid, last) FROM polymarket.price_snapshots
+                   WHERE market_id=$1 AND outcome_id=$2
+                   ORDER BY ts DESC LIMIT 1""",
                 mid, no_outcome,
             ) if no_outcome else None
+            # BTC spot at the moment closest to (and not beyond) window_end.
+            close_btc = await conn.fetchval(
+                """SELECT price FROM polymarket.coin_prices
+                   WHERE coin_id=$1 AND ts <= $2
+                   ORDER BY ts DESC LIMIT 1""",
+                coin_id, window_end,
+            ) if coin_id else None
+
             await conn.execute(
                 """
                 UPDATE core.markets
-                SET total_volume = $2,
-                    traders = $3,
-                    last_yes = $4,
-                    last_no = $5
+                SET total_volume   = $2,
+                    traders        = $3,
+                    last_yes       = $4,
+                    last_no        = $5,
+                    trade_count    = $6,
+                    largest_trade  = $7,
+                    avg_trade      = $8,
+                    close_btc      = $9
                 WHERE id = $1
                 """,
                 mid,
@@ -129,6 +145,10 @@ async def _update_aggregates() -> None:
                 int(stats["traders"]) if stats["traders"] is not None else 0,
                 float(last_yes) if last_yes is not None else None,
                 float(last_no) if last_no is not None else None,
+                int(stats["trade_count"]) if stats["trade_count"] is not None else 0,
+                float(stats["largest"]) if stats["largest"] is not None else None,
+                float(stats["avg_size"]) if stats["avg_size"] is not None else None,
+                float(close_btc) if close_btc is not None else None,
             )
 
 

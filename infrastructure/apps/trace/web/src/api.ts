@@ -36,6 +36,10 @@ export type WindowSummary = {
   traders: number | null;
   last_yes: number | null;
   last_no: number | null;
+  trade_count: number | null;
+  largest_trade: number | null;
+  avg_trade: number | null;
+  close_btc: number | null;
 };
 
 export type WindowList = {
