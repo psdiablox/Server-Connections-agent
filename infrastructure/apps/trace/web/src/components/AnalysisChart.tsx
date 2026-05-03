@@ -92,8 +92,8 @@ export function AnalysisChart({
     return { yesLine: ys, noLine: ns };
   }, [trades]);
 
-  const yesPath = useMemo(() => makeLinePath(yesLine, x, yProb), [yesLine, t0, dt, innerH]);
-  const noPath = useMemo(() => makeLinePath(noLine, x, yProb), [noLine, t0, dt, innerH]);
+  const yesPath = useMemo(() => makeLinePath(yesLine, x, yProb, t1), [yesLine, t0, t1, dt, innerH]);
+  const noPath = useMemo(() => makeLinePath(noLine, x, yProb, t1), [noLine, t0, t1, dt, innerH]);
 
   // Base price scale — symmetric around strike so STRIKE sits exactly on 50¢.
   const { yBase, baseMin, baseMax } = useMemo(() => {
@@ -305,12 +305,15 @@ export function AnalysisChart({
         onMouseMove={onMove}
         onMouseLeave={onLeave}
       >
-        {/* Diagonal stripe pattern for outage bands */}
         <defs>
           <pattern id="outage-stripes" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
             <rect width="6" height="6" fill="rgba(239,68,68,0.18)" />
             <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(239,68,68,0.55)" strokeWidth="2" />
           </pattern>
+          {/* Clip the chart area so bubbles + lines never bleed past the axes. */}
+          <clipPath id="chart-area-clip">
+            <rect x={M.left} y={M.top} width={innerW} height={innerH} />
+          </clipPath>
         </defs>
 
         {layers.heatmap && cells}
@@ -418,27 +421,25 @@ export function AnalysisChart({
           </>
         )}
 
-        {/* Base price line */}
-        {layers.base && basePath && <path d={basePath} fill="none" stroke={baseColor} strokeWidth={1.5} opacity={0.85} />}
-
-        {/* YES / NO lines (derived from trades) */}
-        {layers.yes && yesPath && <path d={yesPath} fill="none" stroke="#22c55e" strokeWidth={1.5} />}
-        {layers.no && noPath && <path d={noPath} fill="none" stroke="#ef4444" strokeWidth={1.5} />}
-
-        {/* Bubbles */}
-        {layers.bubbles &&
-          bubbleData.map((b, i) => (
-            <circle
-              key={i}
-              cx={b.tx}
-              cy={b.ty}
-              r={b.r}
-              fill={b.filled ? b.color : "transparent"}
-              stroke={b.color}
-              strokeWidth={b.filled ? 0 : 1.4}
-              opacity={0.7}
-            />
-          ))}
+        {/* Lines + bubbles all clipped to the chart area. */}
+        <g clipPath="url(#chart-area-clip)">
+          {layers.base && basePath && <path d={basePath} fill="none" stroke={baseColor} strokeWidth={1.5} opacity={0.85} />}
+          {layers.yes && yesPath && <path d={yesPath} fill="none" stroke="#22c55e" strokeWidth={1.5} />}
+          {layers.no && noPath && <path d={noPath} fill="none" stroke="#ef4444" strokeWidth={1.5} />}
+          {layers.bubbles &&
+            bubbleData.map((b, i) => (
+              <circle
+                key={i}
+                cx={b.tx}
+                cy={b.ty}
+                r={b.r}
+                fill={b.filled ? b.color : "transparent"}
+                stroke={b.color}
+                strokeWidth={b.filled ? 0 : 1.4}
+                opacity={0.7}
+              />
+            ))}
+        </g>
 
         {/* Crosshair */}
         {hover && (
@@ -546,12 +547,12 @@ export function AnalysisChart({
 function makeLinePath(
   trades: Trade[],
   x: (ms: number) => number,
-  y: (p: number) => number
+  y: (p: number) => number,
+  endMs?: number
 ): string {
   if (trades.length === 0) return "";
   // Step path: each trade defines a price level that holds until the next trade.
   let d = "";
-  let prevX: number | null = null;
   let prevY: number | null = null;
   for (let i = 0; i < trades.length; i++) {
     const t = trades[i];
@@ -560,11 +561,17 @@ function makeLinePath(
     if (i === 0) {
       d += `M ${cx.toFixed(1)} ${cy.toFixed(1)}`;
     } else {
-      // step horizontally to new x, then vertical to new y
       d += ` L ${cx.toFixed(1)} ${prevY!.toFixed(1)} L ${cx.toFixed(1)} ${cy.toFixed(1)}`;
     }
-    prevX = cx;
     prevY = cy;
+  }
+  // Extend horizontally to the end of the visible window with the last known
+  // value — the price holds until either a new trade or window close.
+  if (endMs !== undefined && prevY !== null) {
+    const lastTradeMs = new Date(trades[trades.length - 1].t).getTime();
+    if (endMs > lastTradeMs) {
+      d += ` L ${x(endMs).toFixed(1)} ${prevY.toFixed(1)}`;
+    }
   }
   return d;
 }

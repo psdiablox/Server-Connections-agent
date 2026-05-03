@@ -169,23 +169,36 @@ async def get_ticks(
 @router.get("/markets/{market_id}/trades", response_model=list[Trade])
 async def get_trades(
     market_id: int,
-    limit: int = Query(2000, ge=1, le=10000),
+    limit: int = Query(20000, ge=1, le=100000),
+    from_: Optional[datetime] = Query(None, alias="from"),
+    to: Optional[datetime] = Query(None, alias="to"),
 ) -> list[Trade]:
+    """By default returns trades that occurred *during the market's resolution
+    window* — Polymarket BTC markets trade for ~24 h leading up to the window,
+    so without filtering you'd see thousands of out-of-window trades and the
+    chart would clip the in-window ones via LIMIT. ?from= and ?to= override."""
+    m = await _load_market(market_id)
     outcomes = await _load_outcomes(market_id)
     label_by_id = {o.id: o.label for o in outcomes}
+    start = from_ or m["starts_at"]
+    end = to or m["ends_at"]
 
     async with pool().acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT ts, outcome_id, side, price, size
-            FROM polymarket.trades
-            WHERE market_id = $1
-            ORDER BY ts ASC
-            LIMIT $2
-            """,
-            market_id,
-            limit,
-        )
+        if start is not None and end is not None:
+            rows = await conn.fetch(
+                """SELECT ts, outcome_id, side, price, size
+                   FROM polymarket.trades
+                   WHERE market_id = $1 AND ts >= $2 AND ts <= $3
+                   ORDER BY ts ASC LIMIT $4""",
+                market_id, start, end, limit,
+            )
+        else:
+            rows = await conn.fetch(
+                """SELECT ts, outcome_id, side, price, size
+                   FROM polymarket.trades WHERE market_id = $1
+                   ORDER BY ts ASC LIMIT $2""",
+                market_id, limit,
+            )
     return [
         Trade(
             t=r["ts"],
@@ -377,8 +390,11 @@ async def get_outages(market_id: int, gap_seconds: int = 30) -> list[Outage]:
 
 @router.get("/markets/{market_id}/order-stats", response_model=OrderStats)
 async def get_order_stats(market_id: int) -> OrderStats:
+    m = await _load_market(market_id)
     outcomes = await _load_outcomes(market_id)
     label_by_id = {o.id: o.label for o in outcomes}
+    start = m["starts_at"]
+    end = m["ends_at"]
 
     async with pool().acquire() as conn:
         rows = await conn.fetch(
@@ -387,9 +403,11 @@ async def get_order_stats(market_id: int) -> OrderStats:
                    MAX(size) AS biggest, AVG(size) AS avg_size
             FROM polymarket.trades
             WHERE market_id = $1
+              AND ($2::timestamptz IS NULL OR ts >= $2)
+              AND ($3::timestamptz IS NULL OR ts <= $3)
             GROUP BY outcome_id, side
             """,
-            market_id,
+            market_id, start, end,
         )
 
     counts = {"YES": {"BUY": 0, "SELL": 0}, "NO": {"BUY": 0, "SELL": 0}}
