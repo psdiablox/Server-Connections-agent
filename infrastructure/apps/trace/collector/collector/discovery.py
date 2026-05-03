@@ -55,7 +55,17 @@ def _is_btc_5min(item: dict) -> tuple[bool, Optional[datetime], Optional[datetim
     return True, starts, end
 
 
-def _parse_outcomes(item: dict) -> list[tuple[str, str]]:
+# Polymarket labels Bitcoin Up/Down markets with outcomes "Up"/"Down".
+# Normalize to YES/NO so the FE can render uniformly across market types.
+_LABEL_NORMALIZE = {
+    "UP": "YES", "DOWN": "NO",
+    "YES": "YES", "NO": "NO",
+    "TRUE": "YES", "FALSE": "NO",
+}
+
+
+def _parse_outcomes(item: dict) -> list[tuple[str, str, str]]:
+    """Returns [(normalized_label, raw_label, token_id), ...]."""
     raw_outcomes = item.get("outcomes")
     raw_tokens = item.get("clobTokenIds")
     if isinstance(raw_outcomes, str):
@@ -70,7 +80,12 @@ def _parse_outcomes(item: dict) -> list[tuple[str, str]]:
             raw_tokens = None
     if not raw_outcomes or not raw_tokens:
         return []
-    return list(zip(raw_outcomes, raw_tokens))
+    out: list[tuple[str, str, str]] = []
+    for label, token in zip(raw_outcomes, raw_tokens):
+        raw = str(label)
+        norm = _LABEL_NORMALIZE.get(raw.upper(), raw.upper())
+        out.append((norm, raw, str(token)))
+    return out
 
 
 def _parse_strike(item: dict) -> Optional[float]:
@@ -159,7 +174,7 @@ async def _upsert_market(item: dict, starts_at: datetime, ends_at: datetime) -> 
             )
             inserted = row["inserted"]
             market_id = row["id"]
-            for label, token_id in outcomes:
+            for label, raw_label, token_id in outcomes:
                 await conn.execute(
                     """
                     INSERT INTO core.market_outcomes (market_id, label, external_token_id)
@@ -167,7 +182,7 @@ async def _upsert_market(item: dict, starts_at: datetime, ends_at: datetime) -> 
                     ON CONFLICT (market_id, label) DO UPDATE
                       SET external_token_id = EXCLUDED.external_token_id
                     """,
-                    market_id, label.upper(), str(token_id),
+                    market_id, label, token_id,
                 )
     return market_id if inserted else None
 
