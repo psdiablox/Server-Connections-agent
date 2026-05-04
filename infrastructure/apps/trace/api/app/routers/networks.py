@@ -145,6 +145,7 @@ async def list_windows(
         "status": "m.status",
         "result": "m.last_yes",
         "coverage": "m.data_coverage_pct",
+        "change": "((m.close_btc - m.strike) / NULLIF(m.strike, 0))",
     }
     column = sort_columns.get(sort, "m.starts_at")
     dir_sql = "ASC" if direction.lower() == "asc" else "DESC"

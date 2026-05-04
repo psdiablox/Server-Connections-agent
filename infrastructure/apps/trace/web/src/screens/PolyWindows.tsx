@@ -114,6 +114,7 @@ export function PolyWindows({
           <SortHead label="LOCAL"      k="time"     sort={sort} dir={dir} onClick={onHeader} />
           <SortHead label="STRIKE"     k="strike"   sort={sort} dir={dir} onClick={onHeader} num />
           <SortHead label="BTC CLOSE"  k="close"    sort={sort} dir={dir} onClick={onHeader} num />
+          <SortHead label="Δ%"         k="change"   sort={sort} dir={dir} onClick={onHeader} num />
           <SortHead label="VOLUME"     k="vol"      sort={sort} dir={dir} onClick={onHeader} num />
           <SortHead label="TRADES"     k="trades"   sort={sort} dir={dir} onClick={onHeader} num />
           <SortHead label="LARGEST"    k="largest"  sort={sort} dir={dir} onClick={onHeader} num />
@@ -150,7 +151,7 @@ export function PolyWindows({
         .pw-table-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 16px 32px; background: var(--bg-0); overflow: hidden; }
         .pw-table-head, .pw-row {
           display: grid;
-          grid-template-columns: 80px 200px 170px 90px 90px 80px 60px 80px 70px 70px 80px 30px;
+          grid-template-columns: 80px 195px 165px 85px 85px 75px 75px 60px 75px 65px 65px 75px 30px;
           align-items: center; gap: 12px; padding: 0 14px;
         }
         .pw-table-head { height: 32px; font-size: 9px; color: var(--fg-3); border-bottom: 1px solid var(--line); background: var(--bg-1); }
@@ -241,6 +242,15 @@ function WindowRow({ w, onPick }: { w: WindowSummary; onPick: (w: WindowSummary)
       <div className="num">{w.strike != null ? "$" + fmt(w.strike, w.strike < 1 ? 4 : (w.strike < 100 ? 2 : 0)) : "—"}</div>
       <div className={"num " + closeClass}>
         {w.close_btc != null ? "$" + fmt(w.close_btc, w.close_btc < 1 ? 4 : (w.close_btc < 100 ? 2 : 0)) : "—"}
+      </div>
+      <div className={"num " + closeClass}>
+        {(() => {
+          if (w.close_btc == null || w.strike == null || w.strike === 0) return "—";
+          const pct = ((w.close_btc - w.strike) / w.strike) * 100;
+          const sign = pct > 0 ? "+" : "";
+          // 4 decimals for very small moves typical of 5-min BTC windows
+          return `${sign}${pct.toFixed(pct === 0 || Math.abs(pct) >= 1 ? 2 : 4)}%`;
+        })()}
       </div>
       <div className="num">{w.total_volume != null ? "$" + fmtCompact(w.total_volume) : "—"}</div>
       <div className="num">{w.trade_count != null ? w.trade_count.toLocaleString() : "—"}</div>
